@@ -1,10 +1,10 @@
 # Xcode project definition. Regenerate Jet.xcodeproj with `xcodegen generate`.
+# The Xcode target ships to the App Store as an iPad-only app; the Mac build lives in Dev/ (./run-mac.sh).
 name: Jet
 options:
-  bundleIdPrefix: dev.jet
+  bundleIdPrefix: com.johnzhao
   deploymentTarget:
     iOS: "18.0"
-    macOS: "14.0"
   createIntermediateGroups: true
 packages:
   JetKit:
@@ -12,26 +12,29 @@ packages:
 targets:
   Jet:
     type: application
-    supportedDestinations: [iOS, macOS]
+    platform: iOS
     sources:
       - App
+      - Resources
     dependencies:
       - package: JetKit
         product: JetKit
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: dev.jet.Jet
+        PRODUCT_BUNDLE_IDENTIFIER: com.johnzhao.jet
         PRODUCT_NAME: Jet
-        MARKETING_VERSION: "0.1"
+        MARKETING_VERSION: "1.0"
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "5.0"
-        TARGETED_DEVICE_FAMILY: "1,2"
+        TARGETED_DEVICE_FAMILY: "2"
         GENERATE_INFOPLIST_FILE: YES
         CODE_SIGN_STYLE: Automatic
-        ENABLE_APP_SANDBOX: NO
-        ENABLE_HARDENED_RUNTIME: YES
+        DEVELOPMENT_TEAM: BJ2UZLM855
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         INFOPLIST_KEY_CFBundleDisplayName: Jet
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
+        # Sync uses only standard HTTPS, which is exempt from export-compliance paperwork.
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
@@ -39,4 +42,3 @@ targets:
         INFOPLIST_KEY_UIFileSharingEnabled: YES
         INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
-        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"

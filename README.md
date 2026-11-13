@@ -13,7 +13,7 @@ Plain-file notes with git sync, for iPad and Mac.
 ## Run
 
 iPad (needs Xcode): open `Jet.xcodeproj`, pick your team under Signing & Capabilities, choose your
-iPad, Run. The same target also builds the Mac app.
+iPad, Run. The Xcode target is iPad-only (it's what ships to the App Store); the Mac app builds from `Dev/`.
 
 Mac without Xcode:
 
