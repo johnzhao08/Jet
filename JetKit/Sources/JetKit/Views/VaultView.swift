@@ -137,7 +137,8 @@ private struct SidebarView: View {
                 .keyboardShortcut("o", modifiers: .command)
             }
         }
-        .safeAreaInset(edge: .bottom) {
+        // On iPad the floating Pencil tool picker sits along the bottom edge, so sync lives at the top there.
+        .safeAreaInset(edge: SyncBar.edge) {
             SyncBar(session: session, showSyncSettings: $showSyncSettings)
         }
         .alert("Rename", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
@@ -211,6 +212,12 @@ private struct SyncBar: View {
     @Environment(AppModel.self) private var app
     @Bindable var session: VaultSession
     @Binding var showSyncSettings: Bool
+
+    #if os(iOS)
+    static let edge = VerticalEdge.top
+    #else
+    static let edge = VerticalEdge.bottom
+    #endif
 
     var body: some View {
         HStack(spacing: 10) {

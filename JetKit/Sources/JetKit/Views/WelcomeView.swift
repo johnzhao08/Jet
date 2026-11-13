@@ -105,13 +105,21 @@ private struct CreateVaultSheet: View {
     @State private var name = "Notes"
     @State private var error: String?
 
+    private static var locationDescription: String {
+        #if os(iOS)
+        "Jet's folder in the Files app"
+        #else
+        AppModel.vaultsDirectory.path
+        #endif
+    }
+
     var body: some View {
         NavigationStack {
             Form {
                 Section {
                     TextField("Vault name", text: $name)
                 } footer: {
-                    Text("Created in \(AppModel.vaultsDirectory.path). You can connect a git remote afterwards in Sync settings.")
+                    Text("Created in \(Self.locationDescription). You can connect a git remote afterwards in Sync settings.")
                 }
                 if let error {
                     Text(error).foregroundStyle(.red)
