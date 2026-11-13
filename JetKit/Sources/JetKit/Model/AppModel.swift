@@ -1,0 +1,181 @@
+import Foundation
+import Observation
+#if canImport(UIKit)
+import UIKit
+#endif
+
+/// A vault the app knows about. `location` is a folder name inside the app's Documents on iPad
+/// (the container path changes between launches) and an absolute path on the Mac.
+public struct VaultRef: Codable, Identifiable, Hashable, Sendable {
+    public var id = UUID()
+    public var name: String
+    public var location: String
+
+    public var url: URL {
+        #if os(macOS)
+        URL(fileURLWithPath: location)
+        #else
+        AppModel.vaultsDirectory.appendingPathComponent(location)
+        #endif
+    }
+}
+
+@MainActor
+@Observable
+public final class AppModel {
+    public var vaults: [VaultRef] = []
+    public var session: VaultSession?
+
+    private static let vaultsKey = "jet.vaults"
+    private static let lastVaultKey = "jet.lastVault"
+
+    public init() {
+        if let data = UserDefaults.standard.data(forKey: Self.vaultsKey),
+           let saved = try? JSONDecoder().decode([VaultRef].self, from: data) {
+            vaults = saved
+        }
+        if let last = UserDefaults.standard.string(forKey: Self.lastVaultKey),
+           let ref = vaults.first(where: { $0.id.uuidString == last }),
+           FileManager.default.fileExists(atPath: ref.url.path) {
+            session = VaultSession(ref: ref)
+        }
+    }
+
+    /// Where new vaults are created.
+    public nonisolated static var vaultsDirectory: URL {
+        let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        #if os(macOS)
+        return documents.appendingPathComponent("Jet")
+        #else
+        return documents
+        #endif
+    }
+
+    public static var deviceName: String {
+        #if os(macOS)
+        Host.current().localizedName ?? "Mac"
+        #else
+        UIDevice.current.name
+        #endif
+    }
+
+    public var authorName: String {
+        get { UserDefaults.standard.string(forKey: "jet.authorName") ?? Self.deviceName }
+        set { UserDefaults.standard.set(newValue, forKey: "jet.authorName") }
+    }
+
+    public var authorEmail: String {
+        get { UserDefaults.standard.string(forKey: "jet.authorEmail") ?? "jet@localhost" }
+        set { UserDefaults.standard.set(newValue, forKey: "jet.authorEmail") }
+    }
+
+    private func persist() {
+        if let data = try? JSONEncoder().encode(vaults) {
+            UserDefaults.standard.set(data, forKey: Self.vaultsKey)
+        }
+    }
+
+    private func freshFolder(named name: String) throws -> URL {
+        let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "/", with: "-")
+        guard !clean.isEmpty, !clean.hasPrefix(".") else { throw JetError("Give the vault a name.") }
+        let url = Self.vaultsDirectory.appendingPathComponent(clean)
+        guard !FileManager.default.fileExists(atPath: url.path) else {
+            throw JetError("A folder named “\(clean)” already exists.")
+        }
+        try FileManager.default.createDirectory(at: Self.vaultsDirectory, withIntermediateDirectories: true)
+        return url
+    }
+
+    private func register(name: String, url: URL) -> VaultRef {
+        #if os(macOS)
+        let ref = VaultRef(name: name, location: url.path)
+        #else
+        let ref = VaultRef(name: name, location: url.lastPathComponent)
+        #endif
+        vaults.append(ref)
+        persist()
+        return ref
+    }
+
+    public func createVault(name: String) throws {
+        let url = try freshFolder(named: name)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        try ".DS_Store\n".write(to: url.appendingPathComponent(".gitignore"), atomically: true, encoding: .utf8)
+        try Self.welcomeNote.write(to: url.appendingPathComponent("Welcome.md"), atomically: true, encoding: .utf8)
+        _ = try GitRepository.create(at: url.path)
+        open(register(name: url.lastPathComponent, url: url))
+    }
+
+    public func cloneVault(remote: String, name: String, username: String, token: String) async throws {
+        let url = try freshFolder(named: name)
+        let credentials = token.isEmpty ? nil : GitCredentials(username: username.isEmpty ? "git" : username, password: token)
+        let path = url.path
+        let remote = remote.trimmingCharacters(in: .whitespacesAndNewlines)
+        do {
+            try await Task.detached(priority: .userInitiated) {
+                _ = try GitRepository.clone(from: remote, to: path, credentials: credentials)
+            }.value
+        } catch {
+            try? FileManager.default.removeItem(at: url)
+            throw error
+        }
+        let ref = register(name: url.lastPathComponent, url: url)
+        Keychain.set(token, for: ref.id.uuidString)
+        UserDefaults.standard.set(username, forKey: "vault.\(ref.id.uuidString).username")
+        open(ref)
+    }
+
+    /// Mac only: use any folder (an existing Obsidian vault, a git checkout) as a vault.
+    public func addExistingFolder(_ url: URL) {
+        if let existing = vaults.first(where: { $0.url.standardizedFileURL == url.standardizedFileURL }) {
+            open(existing)
+        } else {
+            open(register(name: url.lastPathComponent, url: url))
+        }
+    }
+
+    public func open(_ ref: VaultRef) {
+        guard FileManager.default.fileExists(atPath: ref.url.path) else { return }
+        session = VaultSession(ref: ref)
+        UserDefaults.standard.set(ref.id.uuidString, forKey: Self.lastVaultKey)
+    }
+
+    public func closeVault() {
+        session?.flushEditors()
+        session = nil
+        UserDefaults.standard.removeObject(forKey: Self.lastVaultKey)
+    }
+
+    /// Removes the vault from the list. Files are only deleted when asked.
+    public func forget(_ ref: VaultRef, deleteFiles: Bool) {
+        if session?.ref.id == ref.id { closeVault() }
+        vaults.removeAll { $0.id == ref.id }
+        persist()
+        Keychain.set("", for: ref.id.uuidString)
+        if deleteFiles { try? FileManager.default.removeItem(at: ref.url) }
+    }
+
+    private static let welcomeNote = """
+    # Welcome to Jet
+
+    Jet keeps your notes as plain files in a folder, and syncs that folder with **git**.
+
+    - Text notes are Markdown (`.md`). Link notes with `[[Note name]]`.
+    - Handwritten notes (`.ink`) open straight into drawing on iPad.
+    - Embed a handwritten note in a text note with `![[Sketch.ink]]`.
+
+    ## Sync
+
+    - [ ] Open **Sync settings** (bottom of the sidebar)
+    - [ ] Paste the HTTPS URL of a git repository and an access token
+    - [ ] Clone the same repository on your other device
+
+    """
+}
+
+public struct JetError: LocalizedError {
+    public let message: String
+    public init(_ message: String) { self.message = message }
+    public var errorDescription: String? { message }
+}

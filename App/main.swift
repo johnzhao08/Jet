@@ -1,0 +1,3 @@
+import JetKit
+
+JetApp.main()

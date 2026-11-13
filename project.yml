@@ -1,0 +1,42 @@
+# Xcode project definition. Regenerate Jet.xcodeproj with `xcodegen generate`.
+name: Jet
+options:
+  bundleIdPrefix: dev.jet
+  deploymentTarget:
+    iOS: "18.0"
+    macOS: "14.0"
+  createIntermediateGroups: true
+packages:
+  JetKit:
+    path: JetKit
+targets:
+  Jet:
+    type: application
+    supportedDestinations: [iOS, macOS]
+    sources:
+      - App
+    dependencies:
+      - package: JetKit
+        product: JetKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.jet.Jet
+        PRODUCT_NAME: Jet
+        MARKETING_VERSION: "0.1"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_STYLE: Automatic
+        ENABLE_APP_SANDBOX: NO
+        ENABLE_HARDENED_RUNTIME: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Jet
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
+        # Vaults live in the app's Documents folder and show up in the Files app.
+        INFOPLIST_KEY_UIFileSharingEnabled: YES
+        INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
