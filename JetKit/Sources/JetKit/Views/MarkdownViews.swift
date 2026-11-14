@@ -8,6 +8,9 @@ struct MarkdownNoteView: View {
     @State private var model: MarkdownNoteModel
     @State private var editorID: UUID?
     @AppStorage("jet.markdown.reading") private var reading = false
+    @State private var imageSource: ImageSource?
+    /// Text waiting to go in at the cursor (a picture's embed).
+    @State private var insertion: String?
 
     init(session: VaultSession, path: String) {
         self.session = session
@@ -20,12 +23,27 @@ struct MarkdownNoteView: View {
         Group {
             if reading {
                 MarkdownPreview(session: session, model: model, path: path)
+            } else if #available(iOS 18.0, macOS 15.0, *) {
+                CursorTextEditor(text: $model.text, insertion: $insertion)
             } else {
                 TextEditor(text: $model.text)
                     .font(.system(.body, design: .monospaced))
                     .scrollContentBackground(.hidden)
                     .padding(.horizontal, 12)
                     .padding(.top, 8)
+                    .onChange(of: insertion) { _, snippet in
+                        guard let snippet else { return }
+                        insertion = nil
+                        model.text = TextInsertion.appending(snippet, to: model.text)
+                    }
+            }
+        }
+        .imageInsertion($imageSource, session: session) { path, _ in
+            let embed = "![[\(session.linkTarget(for: path))]]"
+            if reading {
+                model.text = TextInsertion.appending(embed, to: model.text)
+            } else {
+                insertion = embed
             }
         }
         .toolbar {
@@ -42,6 +60,14 @@ struct MarkdownNoteView: View {
                     .disabled(dailyNeighbor(before: false) == nil)
                     .help("Next daily note")
                 }
+            }
+            ToolbarItem(placement: .primaryAction) {
+                Menu {
+                    ImageSourceButtons(source: $imageSource)
+                } label: {
+                    Label("Insert picture", systemImage: "photo.badge.plus")
+                }
+                .help("Add a picture to the note (saved in Attachments)")
             }
             ToolbarItem(placement: .primaryAction) {
                 Button { reading.toggle() } label: {
@@ -74,6 +100,50 @@ struct MarkdownNoteView: View {
         return before
             ? days.last { $0.localizedStandardCompare(path) == .orderedAscending }
             : days.first { $0.localizedStandardCompare(path) == .orderedDescending }
+    }
+}
+
+/// The source editor, with the cursor tracked so pictures go in where you're typing.
+@available(iOS 18.0, macOS 15.0, *)
+struct CursorTextEditor: View {
+    @Binding var text: String
+    @Binding var insertion: String?
+    @State private var selection: TextSelection?
+
+    var body: some View {
+        TextEditor(text: $text, selection: $selection)
+            .font(.system(.body, design: .monospaced))
+            .scrollContentBackground(.hidden)
+            .padding(.horizontal, 12)
+            .padding(.top, 8)
+            .onChange(of: insertion) { _, snippet in
+                guard let snippet else { return }
+                insertion = nil
+                insert(snippet)
+            }
+    }
+
+    private func insert(_ snippet: String) {
+        guard case .selection(let range)? = selection?.indices,
+              range.lowerBound >= text.startIndex, range.upperBound <= text.endIndex else {
+            text = TextInsertion.appending(snippet, to: text)
+            return
+        }
+        // An embed needs a line of its own.
+        let before = range.lowerBound == text.startIndex || text[text.index(before: range.lowerBound)] == "\n" ? "" : "\n"
+        let after = range.upperBound == text.endIndex || text[range.upperBound] == "\n" ? "" : "\n"
+        let piece = before + snippet + after
+        let offset = text.distance(from: text.startIndex, to: range.lowerBound) + piece.count
+        text.replaceSubrange(range, with: piece)
+        let cursor = text.index(text.startIndex, offsetBy: min(offset, text.count))
+        selection = TextSelection(insertionPoint: cursor)
+    }
+}
+
+enum TextInsertion {
+    /// `snippet` on a new line at the end of `text`.
+    static func appending(_ snippet: String, to text: String) -> String {
+        (text.isEmpty || text.hasSuffix("\n") ? text : text + "\n") + snippet + "\n"
     }
 }
 
@@ -145,6 +215,10 @@ struct MarkdownBlock: Identifiable {
                 flush()
                 blocks.append(MarkdownBlock(id: index, kind: .rule))
             } else if let match = trimmed.wholeMatch(of: #/!\[\[([^\]]+)\]\]/#) {
+                flush()
+                blocks.append(MarkdownBlock(id: index, kind: .embed(String(match.1))))
+            } else if let match = trimmed.wholeMatch(of: #/!\[[^\]]*\]\(<?([^)>]+?)>?(?:\s+"[^"]*")?\)/#) {
+                // Standard Markdown image: ![alt](path or URL)
                 flush()
                 blocks.append(MarkdownBlock(id: index, kind: .embed(String(match.1))))
             } else if let match = trimmed.wholeMatch(of: #/[-*+]\s+\[([ xX])\]\s+(.*)/#) {
@@ -266,6 +340,19 @@ struct MarkdownPreview: View {
         })
     }
 
+    /// A Markdown-style path relative to this note's folder (`../Attachments/a%20b.png`).
+    private func relativeToNote(_ target: String) -> String? {
+        let decoded = target.removingPercentEncoding ?? target
+        let folder = (path as NSString).deletingLastPathComponent
+        var parts = folder.isEmpty ? [] : folder.split(separator: "/").map(String.init)
+        for part in decoded.split(separator: "/").map(String.init) {
+            if part == ".." { guard !parts.isEmpty else { return nil }; parts.removeLast() }
+            else if part != "." { parts.append(part) }
+        }
+        let candidate = parts.joined(separator: "/")
+        return !candidate.isEmpty && session.exists(candidate) && !session.isDirectory(candidate) ? candidate : nil
+    }
+
     private func noteTitle(_ path: String) -> String {
         ((path as NSString).lastPathComponent as NSString).deletingPathExtension
     }
@@ -357,13 +444,20 @@ struct MarkdownPreview: View {
     @ViewBuilder
     private func embed(_ target: String) -> some View {
         let name = target.split(separator: "|").first.map(String.init) ?? target
-        if let path = session.resolve(name) {
+        if let url = URL(string: name), ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
+            AsyncImage(url: url) { image in
+                image.resizable().scaledToFit()
+            } placeholder: {
+                ProgressView()
+            }
+            .frame(maxWidth: 600)
+        } else if let path = relativeToNote(name) ?? session.resolve(name) {
             let ext = (path as NSString).pathExtension.lowercased()
             if ext == "ink" {
                 Button {
                     session.selection = path
                 } label: {
-                    InkEmbedView(url: session.url(for: path), version: session.contentVersion)
+                    InkEmbedView(url: session.url(for: path), root: session.root, version: session.contentVersion)
                 }
                 .buttonStyle(.plain)
             } else if let image = PlatformImage(contentsOfFile: session.url(for: path).path) {

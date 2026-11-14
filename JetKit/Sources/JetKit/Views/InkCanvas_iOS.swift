@@ -15,13 +15,14 @@ import PencilKit
 ///   handles them itself (see `perform(_:)`), so the gestures keep working on a clean page.
 struct InkCanvasRepresentable: UIViewControllerRepresentable {
     let model: InkNoteModel
+    let root: URL
     let generation: Int
     let paper: PaperStyle
     let showsToolPicker: Bool
     let tools: [InkPickerTool]
 
     func makeUIViewController(context: Context) -> InkCanvasController {
-        InkCanvasController(model: model, tools: tools)
+        InkCanvasController(model: model, root: root, tools: tools)
     }
 
     func updateUIViewController(_ controller: InkCanvasController, context: Context) {
@@ -34,6 +35,8 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
     private let model: InkNoteModel
     private let canvas = PKCanvasView()
     private let paperView = PaperLinesView()
+    private let pageContent: PageContentView
+    private let imageOverlay = ImageSelectionOverlay()
     private let spaceGuide = InsertSpaceGuideView()
     private lazy var insertSpacePan = UIPanGestureRecognizer(target: self, action: #selector(handleInsertSpace(_:)))
     private lazy var lassoWatcher = TouchWatcher { [weak self] path, touchType in self?.lassoGestureEnded(path, touchType) }
@@ -56,10 +59,17 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
     private var lassoSelection: [CGPoint]?
     /// The drawing as it was when an insert-space drag began, the line it started at (page points),
     /// and how far the strokes below may move up before they would overlap the strokes above.
-    private var spaceDrag: (original: PKDrawing, lineY: CGFloat, maxUp: CGFloat)?
+    private var spaceDrag: (original: PKDrawing, images: [InkImage], lineY: CGFloat, maxUp: CGFloat)?
     /// Where the finger or Pencil first touched, in canvas coordinates. A pan is only recognised after
     /// some movement, so measuring from the touch-down keeps the line where the drag really started.
     private var spaceTouchStart: CGPoint?
+
+    /// Pictures on the page, the selected one (being moved or resized) and its frame when a drag began.
+    private var images: [InkImage] = []
+    private var selectedImageID: String?
+    private var imageDragStart: (images: [InkImage], frame: CGRect)?
+    private lazy var imageLongPress = UILongPressGestureRecognizer(target: self, action: #selector(handleImageLongPress(_:)))
+    private lazy var deselectTap = UITapGestureRecognizer(target: self, action: #selector(handleDeselectTap(_:)))
 
     private var appliedGeneration = -1
     private var paper = PaperStyle.lined
@@ -68,9 +78,10 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
     /// Page height in page points (the page is `InkDocument.pageWidth` wide). Only ever grows while open.
     private var pageHeight: CGFloat = 0
 
-    init(model: InkNoteModel, tools: [InkPickerTool]) {
+    init(model: InkNoteModel, root: URL, tools: [InkPickerTool]) {
         self.model = model
         self.tools = tools
+        pageContent = PageContentView(root: root)
         toolPicker = PKToolPicker()
         super.init(nibName: nil, bundle: nil)
         toolPicker = makeToolPicker()
@@ -100,6 +111,25 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
         canvas.showsHorizontalScrollIndicator = false
         canvas.tool = PKInkingTool(.pen, color: .label, width: 3)
         view.addSubview(canvas)
+        // Pictures go inside the scroll view, behind PencilKit's own views, so ink draws over them.
+        canvas.insertSubview(pageContent, at: 0)
+
+        imageOverlay.frame = view.bounds
+        imageOverlay.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        imageOverlay.onDelete = { [weak self] in self?.deleteSelectedImage() }
+        imageOverlay.onDone = { [weak self] in self?.selectImage(nil) }
+        imageOverlay.box.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(handleImageMove(_:))))
+        imageOverlay.handle.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(handleImageResize(_:))))
+        view.addSubview(imageOverlay)
+
+        // A finger held on a picture selects it (the Pencil keeps writing over pictures).
+        imageLongPress.minimumPressDuration = 0.4
+        imageLongPress.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+        imageLongPress.delegate = self
+        canvas.addGestureRecognizer(imageLongPress)
+        deselectTap.isEnabled = false
+        deselectTap.delegate = self
+        canvas.addGestureRecognizer(deselectTap)
 
         configureToolPicker()
 
@@ -146,6 +176,7 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
 
         model.toggleTool = { [weak self] tool in self?.toggle(tool) }
         model.undo = { [weak self] in self?.canvas.undoManager?.undo() }
+        model.insertImage = { [weak self] path, pixels in self?.insertImage(path, pixelSize: pixels) }
         model.redo = { [weak self] in self?.canvas.undoManager?.redo() }
     }
 
@@ -190,6 +221,9 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
         if generation != appliedGeneration {
             appliedGeneration = generation
             canvas.drawing = model.drawing
+            images = model.images
+            selectImage(nil)
+            pageContent.setImages(images)
             pageHeight = 0
             updateContentSize()
         }
@@ -315,6 +349,7 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
         if newMode != mode {
             mode = newMode
             lassoSelection = nil
+            selectImage(nil)
             spaceGuide.hint = switch newMode {
             case .lasso: "Lasso: circle handwriting to select it. Tap outside the selection when you're done."
             case .insertSpace: "Insert space: drag down with Apple Pencil to add space, up to remove it."
@@ -383,17 +418,17 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
             let start = spaceTouchStart?.y ?? (pan.location(in: canvas).y - pan.translation(in: canvas).y)
             let lineY = start / zoom
             let drawing = canvas.drawing
-            let below = drawing.strokes.filter { $0.renderBounds.minY >= lineY }
-            let above = drawing.strokes.filter { $0.renderBounds.minY < lineY }
-            let belowTop = below.map(\.renderBounds.minY).min() ?? lineY
-            let aboveBottom = above.map(\.renderBounds.maxY).max() ?? 0
+            let frames = drawing.strokes.map(\.renderBounds) + images.map(\.frame)
+            let belowTop = frames.filter { $0.minY >= lineY }.map(\.minY).min() ?? lineY
+            let aboveBottom = frames.filter { $0.minY < lineY }.map(\.maxY).max() ?? 0
             let maxUp = max(0, belowTop - max(aboveBottom, 0) - 4)
-            spaceDrag = (drawing, lineY, maxUp)
+            spaceDrag = (drawing, images, lineY, maxUp)
             spaceGuide.show(lineAt: start - canvas.contentOffset.y, delta: 0)
         case .changed:
             guard let drag = spaceDrag else { return }
             let delta = max(pan.location(in: canvas).y / zoom - drag.lineY, -drag.maxUp)
             canvas.drawing = Self.shifting(drag.original, below: drag.lineY, by: delta)
+            pageContent.setImages(Self.shifting(drag.images, below: drag.lineY, by: delta))
             spaceGuide.show(lineAt: drag.lineY * zoom - canvas.contentOffset.y, delta: delta * zoom)
         case .ended, .cancelled, .failed:
             spaceGuide.hide()
@@ -402,11 +437,14 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
             let delta = max(pan.location(in: canvas).y / zoom - drag.lineY, -drag.maxUp)
             guard pan.state == .ended, abs(delta) >= 1 else {
                 canvas.drawing = drag.original
+                pageContent.setImages(drag.images)
                 return
             }
-            let result = Self.shifting(drag.original, below: drag.lineY, by: delta)
-            canvas.drawing = result
-            registerUndo(from: drag.original, to: result, name: delta > 0 ? "Insert Space" : "Remove Space")
+            let result = PageState(drawing: Self.shifting(drag.original, below: drag.lineY, by: delta),
+                                   images: Self.shifting(drag.images, below: drag.lineY, by: delta))
+            apply(result)
+            registerUndo(from: PageState(drawing: drag.original, images: drag.images), to: result,
+                         name: delta > 0 ? "Insert Space" : "Remove Space")
             updateContentSize()
             // One drag per use, then back to writing.
             returnToPreviousTool()
@@ -427,13 +465,168 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
         })
     }
 
-    private func registerUndo(from old: PKDrawing, to new: PKDrawing, name: String) {
+    /// Pictures that start below `lineY` moved down by `delta` (up if negative).
+    static func shifting(_ images: [InkImage], below lineY: CGFloat, by delta: CGFloat) -> [InkImage] {
+        images.map { image in
+            guard image.frame.minY >= lineY else { return image }
+            var moved = image
+            moved.frame = image.frame.offsetBy(dx: 0, dy: delta)
+            return moved
+        }
+    }
+
+    /// The page's ink and pictures, for undo.
+    struct PageState {
+        var drawing: PKDrawing
+        var images: [InkImage]
+    }
+
+    private var pageState: PageState { PageState(drawing: canvas.drawing, images: images) }
+
+    private func apply(_ state: PageState) {
+        if state.drawing != canvas.drawing { canvas.drawing = state.drawing }
+        setImages(state.images)
+    }
+
+    private func setImages(_ newImages: [InkImage]) {
+        images = newImages
+        if let id = selectedImageID, !images.contains(where: { $0.id == id }) { selectImage(nil) }
+        pageContent.setImages(images)
+        updateImageOverlay()
+        model.imagesChanged(images)
+        updateContentSize()
+    }
+
+    private func registerUndo(from old: PageState, to new: PageState, name: String) {
         guard let undoManager = canvas.undoManager else { return }
         undoManager.registerUndo(withTarget: self) { controller in
-            controller.canvas.drawing = old
+            controller.apply(old)
             controller.registerUndo(from: new, to: old, name: name)
         }
         undoManager.setActionName(name)
+    }
+
+    // MARK: Pictures
+
+    /// Puts a picture in the middle of what's on screen, sized to fit comfortably, and selects it.
+    private func insertImage(_ path: String, pixelSize: CGSize) {
+        let zoom = max(canvas.zoomScale, 0.01)
+        let visible = CGRect(x: canvas.contentOffset.x / zoom, y: max(0, canvas.contentOffset.y) / zoom,
+                             width: canvas.bounds.width / zoom, height: canvas.bounds.height / zoom)
+        let natural = CGSize(width: max(pixelSize.width, 1) / 2, height: max(pixelSize.height, 1) / 2)
+        let fit = min(1, 560 / natural.width, (visible.height * 0.6) / natural.height, (InkDocument.pageWidth - 80) / natural.width)
+        let size = CGSize(width: max(natural.width * fit, 60), height: max(natural.height * fit, 60 * natural.height / natural.width))
+        let origin = CGPoint(x: (InkDocument.pageWidth - size.width) / 2, y: max(16, visible.midY - size.height / 2))
+        let image = InkImage(path: path, frame: CGRect(origin: origin, size: size))
+        let before = pageState
+        setImages(images + [image])
+        registerUndo(from: before, to: pageState, name: "Insert Picture")
+        selectImage(image.id)
+    }
+
+    private func selectImage(_ id: String?) {
+        selectedImageID = id
+        deselectTap.isEnabled = id != nil
+        updateImageOverlay()
+    }
+
+    private func deleteSelectedImage() {
+        guard let id = selectedImageID else { return }
+        let before = pageState
+        selectImage(nil)
+        setImages(images.filter { $0.id != id })
+        registerUndo(from: before, to: pageState, name: "Delete Picture")
+    }
+
+    /// Page rect -> overlay (view) rect.
+    private func viewRect(forPage rect: CGRect) -> CGRect {
+        let zoom = canvas.zoomScale
+        let content = CGRect(x: rect.minX * zoom, y: rect.minY * zoom, width: rect.width * zoom, height: rect.height * zoom)
+        return canvas.convert(content, to: view)
+    }
+
+    private func updateImageOverlay() {
+        guard let id = selectedImageID, let frame = pageContent.frame(ofImage: id) else {
+            imageOverlay.hide()
+            return
+        }
+        imageOverlay.show(viewRect(forPage: frame))
+    }
+
+    private func pageImage(at point: CGPoint) -> InkImage? {
+        images.last { $0.frame.contains(point) }
+    }
+
+    @objc private func handleImageLongPress(_ press: UILongPressGestureRecognizer) {
+        guard press.state == .began, mode != .insertSpace else { return }
+        let zoom = max(canvas.zoomScale, 0.01)
+        let location = press.location(in: canvas)
+        guard let image = pageImage(at: CGPoint(x: location.x / zoom, y: location.y / zoom)) else { return }
+        // Throw away any ink the finger started.
+        canvas.drawingGestureRecognizer.isEnabled = false
+        canvas.drawingGestureRecognizer.isEnabled = mode != .insertSpace
+        selectImage(image.id)
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+    }
+
+    @objc private func handleDeselectTap(_ tap: UITapGestureRecognizer) {
+        let point = tap.location(in: view)
+        if !imageOverlay.box.frame.contains(point) { selectImage(nil) }
+    }
+
+    @objc private func handleImageMove(_ pan: UIPanGestureRecognizer) {
+        guard let id = selectedImageID, let index = images.firstIndex(where: { $0.id == id }) else { return }
+        let zoom = max(canvas.zoomScale, 0.01)
+        switch pan.state {
+        case .began:
+            imageDragStart = (images, images[index].frame)
+        case .changed:
+            guard let start = imageDragStart else { return }
+            let t = pan.translation(in: view)
+            var frame = start.frame.offsetBy(dx: t.x / zoom, dy: t.y / zoom)
+            frame.origin.x = min(max(frame.minX, -frame.width + 40), InkDocument.pageWidth - 40)
+            frame.origin.y = max(frame.minY, 0)
+            pageContent.setFrame(frame, ofImage: id)
+            updateImageOverlay()
+        case .ended, .cancelled:
+            finishImageDrag(id)
+        default:
+            break
+        }
+    }
+
+    @objc private func handleImageResize(_ pan: UIPanGestureRecognizer) {
+        guard let id = selectedImageID, let index = images.firstIndex(where: { $0.id == id }) else { return }
+        let zoom = max(canvas.zoomScale, 0.01)
+        switch pan.state {
+        case .began:
+            imageDragStart = (images, images[index].frame)
+        case .changed:
+            guard let start = imageDragStart else { return }
+            // Keeps the picture's proportions; the top-left corner stays put.
+            let t = pan.translation(in: view)
+            let aspect = start.frame.height / max(start.frame.width, 1)
+            let width = min(max(start.frame.width + max(t.x, t.y / max(aspect, 0.01)) / zoom, 40), InkDocument.pageWidth * 1.5)
+            let frame = CGRect(x: start.frame.minX, y: start.frame.minY, width: width, height: width * aspect)
+            pageContent.setFrame(frame, ofImage: id)
+            updateImageOverlay()
+        case .ended, .cancelled:
+            finishImageDrag(id)
+        default:
+            break
+        }
+    }
+
+    private func finishImageDrag(_ id: String) {
+        guard let start = imageDragStart, let frame = pageContent.frame(ofImage: id),
+              let index = images.firstIndex(where: { $0.id == id }) else { return }
+        imageDragStart = nil
+        guard frame != start.frame else { return }
+        var updated = images
+        updated[index].frame = frame
+        let before = PageState(drawing: canvas.drawing, images: start.images)
+        setImages(updated)
+        registerUndo(from: before, to: pageState, name: "Move Picture")
     }
 
     // MARK: Multi-finger taps
@@ -470,7 +663,7 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
     private func updateContentSize() {
         guard laidOutWidth > 0 else { return }
         let zoom = canvas.zoomScale
-        let bounds = canvas.drawing.bounds
+        let bounds = images.reduce(canvas.drawing.bounds) { $0.union($1.frame) }
         let inkBottom = bounds.isNull ? 0 : bounds.maxY
         // Always leave most of a screen of fresh paper below the last stroke.
         pageHeight = max(pageHeight, inkBottom + 900, canvas.bounds.height / max(zoom, 0.01) + 300)
@@ -478,6 +671,7 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
         if abs(canvas.contentSize.width - size.width) > 0.5 || abs(canvas.contentSize.height - size.height) > 0.5 {
             canvas.contentSize = size
         }
+        pageContent.layout(pageSize: CGSize(width: InkDocument.pageWidth, height: pageHeight), zoom: zoom)
     }
 
     private func updatePaper() {
@@ -497,10 +691,18 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         updatePaper()
+        updateImageOverlay()
     }
 
     func scrollViewDidZoom(_ scrollView: UIScrollView) {
+        pageContent.layout(pageSize: CGSize(width: InkDocument.pageWidth, height: pageHeight), zoom: canvas.zoomScale)
         updatePaper()
+        updateImageOverlay()
+    }
+
+    func canvasViewDidBeginUsingTool(_ canvasView: PKCanvasView) {
+        // Writing elsewhere puts the picture down.
+        if selectedImageID != nil { selectImage(nil) }
     }
 
     func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
