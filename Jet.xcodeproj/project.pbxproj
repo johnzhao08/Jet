@@ -9,6 +9,9 @@
 /* Begin PBXBuildFile section */
 		5279384B946761E22CB36D76 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18BA418F99AE677FA2E4FE9C /* main.swift */; };
 		AAD6EFC9D2B131373FCE155D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 9EC6B2C8D6C2F6A9B5AD76BB /* Assets.xcassets */; };
+		D373187B043411EA1703EC42 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18BA418F99AE677FA2E4FE9C /* main.swift */; };
+		F538C78DE216A50446AC26DB /* JetKit in Frameworks */ = {isa = PBXBuildFile; productRef = 9F8C0C5BDD9A4F44CDE6D533 /* JetKit */; };
+		FB75DB510A95FBA92374C649 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 9EC6B2C8D6C2F6A9B5AD76BB /* Assets.xcassets */; };
 		FF01FABBCA110EE50F7F8A18 /* JetKit in Frameworks */ = {isa = PBXBuildFile; productRef = 3768ECB5D2F33D08148390F5 /* JetKit */; };
 /* End PBXBuildFile section */
 
@@ -17,9 +20,18 @@
 		395D913E8BEE7F52A101A8E3 /* Jet.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Jet.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		42432E9F880705CE62D3DF60 /* JetKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = JetKit; path = JetKit; sourceTree = SOURCE_ROOT; };
 		9EC6B2C8D6C2F6A9B5AD76BB /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		F945FAF6164789F041AA17CA /* JetMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = JetMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		0A74670C27F3BD88851D0D62 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F538C78DE216A50446AC26DB /* JetKit in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		6A16D4101715576906B83D3E /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -35,6 +47,7 @@
 			isa = PBXGroup;
 			children = (
 				395D913E8BEE7F52A101A8E3 /* Jet.app */,
+				F945FAF6164789F041AA17CA /* JetMac.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -76,6 +89,26 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		CBE3AD1230D0E87C79364C75 /* JetMac */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 4A2AE0902E84F9BDA203585B /* Build configuration list for PBXNativeTarget "JetMac" */;
+			buildPhases = (
+				9CF6AB05ABD21B0E277B25B2 /* Sources */,
+				5BCE3218B672F5ED512C39FC /* Resources */,
+				0A74670C27F3BD88851D0D62 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = JetMac;
+			packageProductDependencies = (
+				9F8C0C5BDD9A4F44CDE6D533 /* JetKit */,
+			);
+			productName = JetMac;
+			productReference = F945FAF6164789F041AA17CA /* JetMac.app */;
+			productType = "com.apple.product-type.application";
+		};
 		E7202417FAA613EC9852A4F7 /* Jet */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 87AFD8B478CCDE56606474EF /* Build configuration list for PBXNativeTarget "Jet" */;
@@ -105,6 +138,10 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
+					CBE3AD1230D0E87C79364C75 = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Manual;
+					};
 					E7202417FAA613EC9852A4F7 = {
 						DevelopmentTeam = BJ2UZLM855;
 						ProvisioningStyle = Automatic;
@@ -129,11 +166,20 @@
 			projectRoot = "";
 			targets = (
 				E7202417FAA613EC9852A4F7 /* Jet */,
+				CBE3AD1230D0E87C79364C75 /* JetMac */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		5BCE3218B672F5ED512C39FC /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				FB75DB510A95FBA92374C649 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		A568D58FFE6D949CF71E6264 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -150,6 +196,14 @@
 			buildActionMask = 2147483647;
 			files = (
 				5279384B946761E22CB36D76 /* main.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		9CF6AB05ABD21B0E277B25B2 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D373187B043411EA1703EC42 /* main.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -233,10 +287,10 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = iphoneos;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
 				SWIFT_VERSION = 5.0;
@@ -295,13 +349,40 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = iphoneos;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		C0C74B969034F46D08524E00 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = "AppIcon-Mac";
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Jet;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.johnzhao.jet.mac;
+				PRODUCT_NAME = Jet;
+				SDKROOT = macosx;
 				SWIFT_VERSION = 5.0;
 			};
 			name = Debug;
@@ -337,9 +418,45 @@
 			};
 			name = Release;
 		};
+		C6C4B54BC3A3E9B0CAC3C13D /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = "AppIcon-Mac";
+				CODE_SIGN_IDENTITY = "-";
+				CODE_SIGN_STYLE = Manual;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Jet;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.johnzhao.jet.mac;
+				PRODUCT_NAME = Jet;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		4A2AE0902E84F9BDA203585B /* Build configuration list for PBXNativeTarget "JetMac" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C0C74B969034F46D08524E00 /* Debug */,
+				C6C4B54BC3A3E9B0CAC3C13D /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 		87AFD8B478CCDE56606474EF /* Build configuration list for PBXNativeTarget "Jet" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -369,6 +486,10 @@
 
 /* Begin XCSwiftPackageProductDependency section */
 		3768ECB5D2F33D08148390F5 /* JetKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = JetKit;
+		};
+		9F8C0C5BDD9A4F44CDE6D533 /* JetKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = JetKit;
 		};

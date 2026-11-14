@@ -1,10 +1,12 @@
 # Xcode project definition. Regenerate Jet.xcodeproj with `xcodegen generate`.
-# The Xcode target ships to the App Store as an iPad-only app; the Mac build lives in Dev/ (./run-mac.sh).
+# `Jet` is the iPad app that ships through App Store Connect; `JetMac` is the Mac app, built and
+# signed locally (./run-mac.sh, ./install-mac.sh).
 name: Jet
 options:
   bundleIdPrefix: com.johnzhao
   deploymentTarget:
     iOS: "18.0"
+    macOS: "14.0"
   createIntermediateGroups: true
 packages:
   JetKit:
@@ -42,3 +44,32 @@ targets:
         INFOPLIST_KEY_UIFileSharingEnabled: YES
         INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+
+  JetMac:
+    type: application
+    platform: macOS
+    sources:
+      - App
+      - Resources
+    dependencies:
+      - package: JetKit
+        product: JetKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.johnzhao.jet.mac
+        PRODUCT_NAME: Jet
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "5.0"
+        GENERATE_INFOPLIST_FILE: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon-Mac
+        INFOPLIST_KEY_CFBundleDisplayName: Jet
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
+        INFOPLIST_KEY_NSHumanReadableCopyright: ""
+        # Signed for this Mac only ("Sign to Run Locally"); no certificate or notarization needed.
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+        DEVELOPMENT_TEAM: ""
+        # Not sandboxed: vaults can be any folder, and the AI helper is launched by other apps.
+        ENABLE_APP_SANDBOX: NO
+        ENABLE_HARDENED_RUNTIME: NO

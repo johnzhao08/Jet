@@ -18,13 +18,13 @@ Plain-file notes with git sync, for iPad and Mac.
 
 ## Run
 
-iPad (needs Xcode): open `Jet.xcodeproj`, pick your team under Signing & Capabilities, choose your
-iPad, Run. The Xcode target is iPad-only (it's what ships to the App Store); the Mac app builds from `Dev/`.
+iPad: open `Jet.xcodeproj`, choose the `Jet` scheme and your iPad, Run.
 
-Mac without Xcode:
+Mac: the `JetMac` target is a regular Mac app, signed to run on this Mac only.
 
 ```sh
-./run-mac.sh
+./install-mac.sh   # build Release and install /Applications/Jet.app
+./run-mac.sh       # build Debug and open it
 ```
 
 ## Release to TestFlight
@@ -50,5 +50,5 @@ ink merge, deletion), and clones a public repository over HTTPS.
 
 - `JetKit/` Swift package with all app code (`Git/`, `Model/`, `Views/`)
 - `App/` the app target's entry point
-- `Dev/` Xcode-less Mac launcher and the self-test
+- `Dev/` the self-test (runs without Xcode)
 - `project.yml` XcodeGen spec for `Jet.xcodeproj`

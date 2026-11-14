@@ -2,8 +2,7 @@
 import PackageDescription
 
 // Tools that run without Xcode:
-//   ./run-mac.sh       launches the Mac app
-//   ./selftest.sh      exercises git sync and ink merging between two simulated devices
+//   ./selftest.sh      exercises git sync, ink merging and note parsing between two simulated devices
 //
 // PencilKit and UserDefaults need a bundle identifier, which a bare executable does not have.
 // Embedding an Info.plist gives these binaries one.
@@ -16,7 +15,6 @@ let package = Package(
     platforms: [.macOS(.v14)],
     dependencies: [.package(path: "../JetKit")],
     targets: [
-        .executableTarget(name: "JetDev", dependencies: ["JetKit"], linkerSettings: embeddedInfoPlist),
         .executableTarget(name: "jet-selftest", dependencies: ["JetKit"], linkerSettings: embeddedInfoPlist),
     ],
     swiftLanguageModes: [.v5]
