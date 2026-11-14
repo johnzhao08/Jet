@@ -477,35 +477,87 @@ do {
     print("  FAIL  threw: \(error.localizedDescription)")
 }
 
-print("16. Drops decode the way SwiftUI decodes them")
+print("16. What a drop is, and what Jet refuses to import")
 do {
     let file = work.appendingPathComponent("Dropped note.md")
     try "# Dropped".write(to: file, atomically: true, encoding: .utf8)
-    func decode(_ provider: NSItemProvider) async -> DroppedItem? {
-        try? await withCheckedThrowingContinuation { continuation in
-            _ = provider.loadTransferable(type: DroppedItem.self) { continuation.resume(with: $0) }
-        }
-    }
+    let finder = NSItemProvider(contentsOf: file)!
+    let row = VaultItem(path: "Welcome.md").itemProvider
+    expect(FileDrop.classify([row]) == .vaultItems, "a dragged sidebar row is a move, never an import")
+    expect(FileDrop.classify([finder]) == .files, "a Finder file is a file")
+    expect(FileDrop.classify([NSItemProvider(object: "just text" as NSString)]) == .nothing, "dragged text isn't a file")
     let semaphore = DispatchSemaphore(value: 0)
-    var finderResult: DroppedItem?
-    var rowResult: DroppedItem?
+    var paths: [String] = []
+    var urls: [URL] = []
     Task.detached {
-        // Finder's drag: the file's URL (and its contents).
-        finderResult = await decode(NSItemProvider(contentsOf: file)!)
-        rowResult = await decode(VaultItem(path: "Welcome.md").itemProvider)
+        paths = await FileDrop.vaultPaths(in: [row])
+        urls = await FileDrop.fileURLs(in: [finder])
         semaphore.signal()
     }
     semaphore.wait()
-    if case .file(let url)? = finderResult {
-        expect(url.standardizedFileURL.path == file.standardizedFileURL.path, "a Finder file drop gives the original file")
-    } else {
-        expect(false, "a Finder file drop gives the original file (got \(String(describing: finderResult)))")
+    expect(paths == ["Welcome.md"], "a dragged row decodes to its path")
+    expect(urls.map(\.standardizedFileURL.path) == [file.standardizedFileURL.path], "a Finder drop gives the original file")
+
+    let vault = work.appendingPathComponent("guarded")
+    let outside = work.appendingPathComponent("guarded-outside")
+    try fm.createDirectory(at: vault, withIntermediateDirectories: true)
+    let app = outside.appendingPathComponent("Tool.app")
+    try fm.createDirectory(at: app.appendingPathComponent("Contents/MacOS"), withIntermediateDirectories: true)
+    try "x".write(to: app.appendingPathComponent("Contents/Info.plist"), atomically: true, encoding: .utf8)
+    let locked = outside.appendingPathComponent("Private")
+    try fm.createDirectory(at: locked, withIntermediateDirectories: true)
+    try "secret".write(to: locked.appendingPathComponent("a.md"), atomically: true, encoding: .utf8)
+    chmod(locked.path, 0o000)
+    let many = outside.appendingPathComponent("Dump")
+    try fm.createDirectory(at: many, withIntermediateDirectories: true)
+    for index in 0...1000 { fm.createFile(atPath: many.appendingPathComponent("\(index).txt").path, contents: Data("x".utf8)) }
+    // A folder like ~/Downloads, which forbids deleting itself.
+    let protected = outside.appendingPathComponent("Protected")
+    try fm.createDirectory(at: protected, withIntermediateDirectories: true)
+    try "keep".write(to: protected.appendingPathComponent("note.md"), atomically: true, encoding: .utf8)
+    let acl = Process()
+    acl.executableURL = URL(fileURLWithPath: "/bin/chmod")
+    acl.arguments = ["+a", "everyone deny delete", protected.path]
+    try acl.run(); acl.waitUntilExit()
+
+    MainActor.assumeIsolated {
+        let session = VaultSession(ref: VaultRef(name: "guarded", location: vault.path))
+        session.requestImport([app, locked, many, work, protected])
+        let refused = Set(session.importReview?.refused.map(\.url.lastPathComponent) ?? [])
+        expect(refused == ["Tool.app", "Private", "Dump", work.lastPathComponent],
+               "apps, unreadable folders, folders of 1000+ files and folders holding the vault are refused")
+        session.resolveImport(includeLarge: false)
+        expect(session.exists("Protected/note.md") && !session.exists("Tool.app") && !session.exists("Private"),
+               "an ordinary folder still comes in, the refused ones don't")
+        let attributes = Process()
+        attributes.executableURL = URL(fileURLWithPath: "/bin/ls")
+        attributes.arguments = ["-led", session.url(for: "Protected").path]
+        let pipe = Pipe()
+        attributes.standardOutput = pipe
+        try? attributes.run(); attributes.waitUntilExit()
+        let listing = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        expect(!listing.contains("deny delete"), "imported copies don't keep the original's access rules")
+        session.delete("Protected")
+        expect(!session.exists("Protected"), "deleting works")
+
+        // A copy made by an older Jet, with the rule still on it, can still be deleted.
+        try? fm.createDirectory(at: session.url(for: "Downloads"), withIntermediateDirectories: true)
+        let stuck = Process()
+        stuck.executableURL = URL(fileURLWithPath: "/bin/chmod")
+        stuck.arguments = ["+a", "everyone deny delete", session.url(for: "Downloads").path]
+        try? stuck.run(); stuck.waitUntilExit()
+        session.refreshTree()
+        session.delete("Downloads")
+        expect(!session.exists("Downloads"), "a folder that forbids deleting can still be deleted from Jet")
     }
-    if case .vaultItem(let path)? = rowResult {
-        expect(path == "Welcome.md", "a dragged sidebar row decodes as a move")
-    } else {
-        expect(false, "a dragged sidebar row decodes as a move (got \(String(describing: rowResult)))")
-    }
+    chmod(locked.path, 0o755)
+    let cleanup = Process()
+    cleanup.executableURL = URL(fileURLWithPath: "/bin/chmod")
+    cleanup.arguments = ["-N", protected.path]
+    try? cleanup.run(); cleanup.waitUntilExit()
+} catch {
+    failures += 1
+    print("  FAIL  threw: \(error.localizedDescription)")
 }
 
 print(failures == 0 ? "\nAll checks passed." : "\n\(failures) check(s) failed.")

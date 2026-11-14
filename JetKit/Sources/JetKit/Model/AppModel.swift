@@ -57,7 +57,11 @@ public final class AppModel {
         var outside: [URL] = []
         var opened = false
         for url in urls where url.isFileURL {
-            if !opened, let (ref, path) = locate(url) {
+            if let folder, let session, let (ref, path) = locate(url), ref.id == session.ref.id {
+                // Already in this vault and dropped on a folder: that's a move.
+                session.move(path, into: folder)
+                opened = true
+            } else if !opened, let (ref, path) = locate(url) {
                 if session?.ref.id != ref.id { open(ref) }
                 session?.refreshTree()
                 session?.selection = path
