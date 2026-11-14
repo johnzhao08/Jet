@@ -218,8 +218,9 @@ public struct VaultTools {
         let data = (try? Data(contentsOf: root.appendingPathComponent(relative))) ?? Data()
         guard let document = InkDocument.decode(data) else { throw Failure("Couldn't read handwritten note “\(relative)”.") }
         let drawing = document.pkDrawing
-        let bounds = drawing.bounds
-        guard !bounds.isNull, !drawing.strokes.isEmpty else {
+        let images = document.images ?? []
+        let bounds = document.contentBounds
+        guard !bounds.isNull, !drawing.strokes.isEmpty || !images.isEmpty else {
             return .text("Handwritten note “\(relative)” is empty.")
         }
         let pageCount = max(1, Int((bounds.maxY / Self.inkPageHeight).rounded(.up)))
@@ -233,11 +234,12 @@ public struct VaultTools {
         result.addText(note)
         for index in (firstPage - 1)..<last {
             let rect = CGRect(x: 0, y: CGFloat(index) * Self.inkPageHeight, width: InkDocument.pageWidth, height: Self.inkPageHeight)
-            guard drawing.strokes.contains(where: { $0.renderBounds.intersects(rect) }) else {
+            guard drawing.strokes.contains(where: { $0.renderBounds.intersects(rect) })
+                    || images.contains(where: { $0.frame.intersects(rect) }) else {
                 result.addText("Page \(index + 1) is blank.")
                 continue
             }
-            if let png = InkSnapshot.png(drawing, rect: rect, pixelWidth: 1200) {
+            if let png = InkSnapshot.png(drawing, images: images, root: root, rect: rect, pixelWidth: 1200) {
                 if last > firstPage { result.addText("Page \(index + 1):") }
                 result.addPNG(png)
             }
@@ -351,8 +353,16 @@ public struct VaultTools {
 
 /// Renders handwriting as a PNG on white paper, in light-mode ink colours.
 enum InkSnapshot {
-    static func png(_ drawing: PKDrawing, rect: CGRect, pixelWidth: CGFloat) -> Data? {
+    static func png(_ drawing: PKDrawing, images: [InkImage] = [], root: URL? = nil, rect: CGRect, pixelWidth: CGFloat) -> Data? {
         let scale = pixelWidth / rect.width
+        if let root, images.contains(where: { $0.frame.intersects(rect) }) {
+            var output: CGImage?
+            (NSAppearance(named: .aqua) ?? NSAppearance.currentDrawing()).performAsCurrentDrawingAppearance {
+                output = InkRenderer.compose(drawing, images: images, root: root, rect: rect, scale: scale, dark: false,
+                                             background: CGColor(gray: 1, alpha: 1))
+            }
+            return output.flatMap { NSBitmapImageRep(cgImage: $0).representation(using: .png, properties: [:]) }
+        }
         let width = Int(rect.width * scale), height = Int(rect.height * scale)
         var image: NSImage?
         (NSAppearance(named: .aqua) ?? NSAppearance.currentDrawing()).performAsCurrentDrawingAppearance {

@@ -32,7 +32,11 @@ public final class InkNoteModel {
     public var mode: InkMode = .draw
 
     @ObservationIgnored public private(set) var drawing = PKDrawing()
+    /// Pictures on the page. Observed, so the Mac's read-only view redraws when they change.
+    public private(set) var images: [InkImage] = []
     @ObservationIgnored public var undo: () -> Void = {}
+    /// Places a picture (a vault-relative path) in view on the page. Set by the canvas.
+    @ObservationIgnored public var insertImage: (_ path: String, _ pixelSize: CGSize) -> Void = { _, _ in }
     @ObservationIgnored public var redo: () -> Void = {}
     /// Turns lasso or insert space on (or back off to the previous tool). Set by the canvas.
     @ObservationIgnored public var toggleTool: (InkMode) -> Void = { _ in }
@@ -55,6 +59,7 @@ public final class InkNoteModel {
         paper = document.paper
         isLoading = false
         drawing = document.pkDrawing
+        images = document.images ?? []
         lastSaved = data
         dirty = false
         generation += 1
@@ -63,6 +68,16 @@ public final class InkNoteModel {
     public func drawingChanged(_ newDrawing: PKDrawing) {
         guard newDrawing != drawing else { return }
         drawing = newDrawing
+        scheduleSave()
+    }
+
+    public func imagesChanged(_ newImages: [InkImage]) {
+        guard newImages != images else { return }
+        images = newImages
+        scheduleSave()
+    }
+
+    private func scheduleSave() {
         dirty = true
         saveTask?.cancel()
         saveTask = Task { [weak self] in
@@ -76,7 +91,7 @@ public final class InkNoteModel {
         saveTask?.cancel()
         guard dirty else { return }
         dirty = false
-        let data = InkDocument(paper: paper, drawing: drawing.dataRepresentation()).encoded()
+        let data = InkDocument(paper: paper, drawing: drawing.dataRepresentation(), images: images).encoded()
         guard data != lastSaved else { return }
         do {
             try data.write(to: url, options: .atomic)

@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import UniformTypeIdentifiers
 
 public enum NoteKind: String, Sendable {
     case ink, markdown
@@ -297,6 +298,38 @@ public final class VaultSession {
         try? FileManager.default.removeItem(at: url(for: path))
         didWriteFile()
         refreshTree()
+    }
+
+    // MARK: Attachments
+
+    public nonisolated static let attachmentsFolder = "Attachments"
+
+    /// Saves a picked or pasted picture in `Attachments/` and returns its path. `name` is a suggested
+    /// file name (without extension); pictures with no name of their own get a dated one.
+    public func addImage(_ data: Data, type: UTType?, named name: String? = nil) -> String? {
+        guard let prepared = ImageFiles.prepareForVault(data, type: type) else { return nil }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd HH.mm.ss"
+        var base = (name ?? "").trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "/", with: "-")
+        while base.hasPrefix(".") { base.removeFirst() }
+        if base.isEmpty { base = "Image \(formatter.string(from: Date()))" }
+        let path = uniquePath(folder: Self.attachmentsFolder, base: base, ext: prepared.ext)
+        do {
+            try FileManager.default.createDirectory(at: url(for: Self.attachmentsFolder), withIntermediateDirectories: true)
+            try prepared.data.write(to: url(for: path))
+        } catch { return nil }
+        didWriteFile()
+        refreshTree()
+        return path
+    }
+
+    /// How a note should name a file in a `![[…]]` embed: just its file name when that's unique in
+    /// the vault (like Obsidian), otherwise its full path.
+    public func linkTarget(for path: String) -> String {
+        let name = (path as NSString).lastPathComponent
+        let sameName = Self.flatten(tree).filter { $0.fileName.lowercased() == name.lowercased() }
+        return sameName.count <= 1 ? name : path
     }
 
     // MARK: Links & tags

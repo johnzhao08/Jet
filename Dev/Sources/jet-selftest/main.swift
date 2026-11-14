@@ -1,5 +1,7 @@
 import Foundation
 import PencilKit
+import AppKit
+import ImageIO
 import JetKit
 
 // End-to-end check of the sync engine: two "devices" (clones) syncing through a local bare repo.
@@ -268,6 +270,57 @@ do {
     expect(call("search_notes", ["query": "#project"]).text.contains("Plan.md"), "search_notes finds tags")
     expect(call("read_note", ["path": "../outside"]).error && call("read_note", ["path": ".git/config"]).error,
            "paths outside the vault or in hidden folders are refused")
+} catch {
+    failures += 1
+    print("  FAIL  threw: \(error.localizedDescription)")
+}
+
+print("12. Pictures on handwritten pages")
+do {
+    let plain = inkFile([stroke(y: 60, at: Date(timeIntervalSince1970: 1))])
+    expect(!String(decoding: plain, as: UTF8.self).contains("images"), "notes without pictures don't gain an images key")
+    let photo = InkImage(id: "p1", path: "Attachments/a.png", frame: CGRect(x: 10, y: 20, width: 300, height: 200))
+    let withPhoto = InkDocument(paper: .lined, drawing: Data(), images: [photo]).encoded()
+    expect(InkDocument.decode(withPhoto)?.images == [photo], "pictures round-trip")
+    expect(InkDocument.decode(withPhoto)?.contentBounds == photo.frame, "content bounds include pictures")
+
+    func doc(_ images: [InkImage]) -> Data { InkDocument(paper: .lined, drawing: Data(), images: images).encoded() }
+    var moved = photo
+    moved.frame = photo.frame.offsetBy(dx: 0, dy: 500)
+    let other = InkImage(id: "p2", path: "Attachments/b.png", frame: CGRect(x: 0, y: 0, width: 10, height: 10))
+    let merged = InkMerge.merge(base: doc([photo]), ours: doc([photo, other]), theirs: doc([moved])).flatMap(InkDocument.decode)
+    expect(merged?.images?.map(\.id) == ["p1", "p2"], "merge keeps a picture added on this device")
+    expect(merged?.images?.first?.frame == moved.frame, "merge takes the other device's move")
+    let removed = InkMerge.merge(base: doc([photo]), ours: doc([photo]), theirs: doc([])).flatMap(InkDocument.decode)
+    expect(removed?.images == nil, "merge drops a picture deleted on the other device")
+
+    // A 3000x1000 opaque bitmap becomes a 2560-wide JPEG; a small PNG stays a PNG, untouched.
+    func png(width: Int, height: Int, alpha: Bool) -> Data {
+        let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                bitmapInfo: (alpha ? CGImageAlphaInfo.premultipliedLast : .noneSkipLast).rawValue)!
+        context.setFillColor(CGColor(red: 1, green: 0, blue: 0, alpha: alpha ? 0.5 : 1))
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        let rep = NSBitmapImageRep(cgImage: context.makeImage()!)
+        return rep.representation(using: .png, properties: [:])!
+    }
+    let big = ImageFiles.prepareForVault(png(width: 3000, height: 1000, alpha: false), type: .png)
+    let bigSize = big.flatMap { CGImageSourceCreateWithData($0.data as CFData, nil) }.flatMap { CGImageSourceCreateImageAtIndex($0, 0, nil) }
+    expect(big?.ext == "jpg" && bigSize?.width == 2560, "large photos are scaled to 2560 px and stored as JPEG")
+    let small = png(width: 200, height: 100, alpha: true)
+    expect(ImageFiles.prepareForVault(small, type: .png).map { $0.ext == "png" && $0.data == small } == true,
+           "small PNGs are kept as they are")
+    expect(ImageFiles.prepareForVault(Data("not an image".utf8), type: nil) == nil, "non-images are refused")
+
+    // The AI helper sees pictures on the page.
+    let vault = work.appendingPathComponent("pictures")
+    try fm.createDirectory(at: vault.appendingPathComponent("Attachments"), withIntermediateDirectories: true)
+    try png(width: 200, height: 100, alpha: false).write(to: vault.appendingPathComponent("Attachments/a.png"))
+    try withPhoto.write(to: vault.appendingPathComponent("Photo.ink"))
+    let reply = MCPServer(vault: vault).handle(["jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                                                 "params": ["name": "read_note", "arguments": ["path": "Photo"]]])
+    let content = ((reply?["result"] as? [String: Any])?["content"] as? [[String: Any]]) ?? []
+    expect(content.contains { $0["type"] as? String == "image" }, "read_note renders a page that only has a picture")
 } catch {
     failures += 1
     print("  FAIL  threw: \(error.localizedDescription)")
