@@ -1,0 +1,375 @@
+#if os(macOS)
+import AppKit
+import Foundation
+import PencilKit
+
+/// What AI assistants can do with a vault through Jet's MCP helper (`jet-mcp`).
+///
+/// Everything works on the files directly, so it also works while Jet is closed; the Mac app watches
+/// the vault folder and shows changes live. Nothing here deletes or overwrites a note wholesale:
+/// notes are created, edited by exact text replacement, or appended to.
+public struct VaultTools {
+    public let root: URL
+
+    public init(root: URL) {
+        self.root = root.standardizedFileURL.resolvingSymlinksInPath()
+    }
+
+    public struct Failure: LocalizedError {
+        public let message: String
+        public var errorDescription: String? { message }
+        init(_ message: String) { self.message = message }
+    }
+
+    /// A tool result in MCP's shape: text and image content blocks.
+    public struct Result {
+        public var content: [[String: Any]] = []
+        public var isError = false
+
+        static func text(_ text: String) -> Result {
+            Result(content: [["type": "text", "text": text]])
+        }
+
+        mutating func addText(_ text: String) { content.append(["type": "text", "text": text]) }
+
+        mutating func addPNG(_ data: Data) {
+            content.append(["type": "image", "data": data.base64EncodedString(), "mimeType": "image/png"])
+        }
+    }
+
+    // MARK: Tool catalogue
+
+    public static let definitions: [[String: Any]] = [
+        tool("list_notes",
+             "List the notes and folders in the Jet vault (or in one folder of it). Markdown notes end in .md; handwritten notes end in .ink and are drawn with Apple Pencil on iPad.",
+             ["folder": ["type": "string", "description": "Folder path relative to the vault root. Omit for the whole vault."]]),
+        tool("read_note",
+             "Read a note. Markdown notes come back as text. Handwritten (.ink) notes come back as images of their pages: read the handwriting and drawings from the images. Long handwritten notes are split into pages; ask for later pages with `page`. A note can be given by path (\"Projects/Jet.md\") or just its title (\"Jet\").",
+             ["path": ["type": "string", "description": "Note path relative to the vault root, or the note's title."],
+              "page": ["type": "integer", "description": "Handwritten notes only: the first page to return (1-based). Default 1."]],
+             required: ["path"]),
+        tool("search_notes",
+             "Search the text of every Markdown note and the titles of all notes. Start the query with # to find notes with a tag (\"#project\" also matches nested tags like #project/jet). Handwritten notes are only matched by title; open them with read_note to see their contents.",
+             ["query": ["type": "string"]], required: ["query"]),
+        tool("note_links",
+             "Show how a note connects to the rest of the vault: the notes it links to with [[wikilinks]], the notes that link to it (backlinks), its #tags and its aliases.",
+             ["path": ["type": "string", "description": "Note path or title."]], required: ["path"]),
+        tool("list_tags",
+             "List every #tag in the vault with how many notes use it.", [:]),
+        tool("create_note",
+             "Create a new Markdown note. Refused if a note already exists at that path. Missing folders are created. Use [[Note title]] to link notes and #tags to tag them, as in Obsidian.",
+             ["path": ["type": "string", "description": "Path for the new note, e.g. \"Ideas/Reading list.md\". .md is added if missing."],
+              "content": ["type": "string", "description": "The note's Markdown text."]],
+             required: ["path", "content"], mutates: true),
+        tool("edit_note",
+             "Edit a Markdown note by replacing one exact piece of its text. `old_text` must appear exactly once in the note (copy it from read_note, whitespace included); include more surrounding text if it appears more than once. Handwritten notes cannot be edited.",
+             ["path": ["type": "string", "description": "Note path or title."],
+              "old_text": ["type": "string"],
+              "new_text": ["type": "string"]],
+             required: ["path", "old_text", "new_text"], mutates: true),
+        tool("append_to_note",
+             "Add text to the end of a Markdown note, creating the note if it doesn't exist. Good for logs, inboxes and daily notes (Daily/YYYY-MM-DD.md).",
+             ["path": ["type": "string", "description": "Note path or title."],
+              "text": ["type": "string"]],
+             required: ["path", "text"], mutates: true),
+    ]
+
+    private static func tool(_ name: String, _ description: String, _ properties: [String: Any],
+                             required: [String] = [], mutates: Bool = false) -> [String: Any] {
+        var schema: [String: Any] = ["type": "object", "properties": properties]
+        if !required.isEmpty { schema["required"] = required }
+        return [
+            "name": name,
+            "description": description,
+            "inputSchema": schema,
+            "annotations": ["readOnlyHint": !mutates, "destructiveHint": false],
+        ]
+    }
+
+    // MARK: Dispatch
+
+    public func call(_ name: String, _ arguments: [String: Any]) -> Result {
+        do {
+            switch name {
+            case "list_notes": return try listNotes(folder: arguments["folder"] as? String)
+            case "read_note": return try readNote(string(arguments, "path"), page: arguments["page"] as? Int ?? 1)
+            case "search_notes": return try search(string(arguments, "query"))
+            case "note_links": return try noteLinks(string(arguments, "path"))
+            case "list_tags": return listTags()
+            case "create_note": return try createNote(string(arguments, "path"), content: string(arguments, "content"))
+            case "edit_note":
+                return try editNote(string(arguments, "path"), old: string(arguments, "old_text"), new: string(arguments, "new_text"))
+            case "append_to_note": return try append(string(arguments, "path"), text: string(arguments, "text"))
+            default: throw Failure("Unknown tool \(name).")
+            }
+        } catch {
+            var result = Result.text(error.localizedDescription)
+            result.isError = true
+            return result
+        }
+    }
+
+    private func string(_ arguments: [String: Any], _ key: String) throws -> String {
+        guard let value = arguments[key] as? String else { throw Failure("Missing `\(key)`.") }
+        return value
+    }
+
+    // MARK: Paths
+
+    private var allNotes: [FileNode] {
+        VaultSession.flatten(VaultSession.scan(root: root, relative: ""))
+            .filter { VaultSession.noteExtensions.contains($0.fileExtension) }
+    }
+
+    /// Lowercased title -> path, first one wins (like the app's link resolution).
+    private var titles: [String: String] {
+        var map: [String: String] = [:]
+        for note in allNotes where map[note.title.lowercased()] == nil { map[note.title.lowercased()] = note.path }
+        return map
+    }
+
+    /// A vault-relative path, refusing anything outside the vault or hidden (like `.git`).
+    private func clean(_ path: String) throws -> String {
+        var trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasPrefix(root.path + "/") { trimmed = String(trimmed.dropFirst(root.path.count + 1)) }
+        while trimmed.hasPrefix("/") || trimmed.hasPrefix("./") { trimmed.removeFirst(trimmed.hasPrefix("/") ? 1 : 2) }
+        let parts = trimmed.split(separator: "/", omittingEmptySubsequences: false)
+        guard !trimmed.isEmpty, !parts.contains(where: { $0.isEmpty || $0 == ".." || $0.hasPrefix(".") }) else {
+            throw Failure("“\(path)” is not a valid path inside the vault.")
+        }
+        return parts.joined(separator: "/")
+    }
+
+    /// An existing note, by path or by title (with or without extension).
+    private func existingNote(_ path: String) throws -> String {
+        let relative = try clean(path)
+        if FileManager.default.fileExists(atPath: root.appendingPathComponent(relative).path) { return relative }
+        for ext in ["md", "ink"] where FileManager.default.fileExists(atPath: root.appendingPathComponent("\(relative).\(ext)").path) {
+            return "\(relative).\(ext)"
+        }
+        let name = ((relative as NSString).lastPathComponent as NSString)
+        let title = VaultSession.noteExtensions.contains(name.pathExtension.lowercased()) ? name.deletingPathExtension : name as String
+        if let found = titles[title.lowercased()] { return found }
+        throw Failure("No note “\(path)” in the vault. Use list_notes or search_notes to find it.")
+    }
+
+    private func markdownPath(_ path: String) throws -> String {
+        let relative = try clean(path)
+        let ext = (relative as NSString).pathExtension.lowercased()
+        if ext == "ink" { throw Failure("“\(relative)” is a handwritten note; only Markdown notes can be changed.") }
+        return ext == "md" || ext == "markdown" ? relative : relative + ".md"
+    }
+
+    private func readText(_ relative: String) throws -> String {
+        guard let text = try? String(contentsOf: root.appendingPathComponent(relative), encoding: .utf8) else {
+            throw Failure("Couldn't read “\(relative)”.")
+        }
+        return text
+    }
+
+    private func write(_ text: String, to relative: String) throws {
+        let url = root.appendingPathComponent(relative)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try text.write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    // MARK: Reading
+
+    func listNotes(folder: String?) throws -> Result {
+        let start = try folder.flatMap { $0.trimmingCharacters(in: .whitespaces).isEmpty ? nil : try clean($0) } ?? ""
+        var lines: [String] = []
+        func walk(_ nodes: [FileNode]) {
+            for node in nodes where lines.count < 2000 {
+                if node.isDirectory {
+                    lines.append(node.path + "/")
+                    walk(node.children ?? [])
+                } else if VaultSession.noteExtensions.contains(node.fileExtension) {
+                    lines.append(node.fileExtension == "ink" ? "\(node.path)  (handwritten)" : node.path)
+                } else {
+                    lines.append("\(node.path)  (file)")
+                }
+            }
+        }
+        walk(VaultSession.scan(root: root, relative: start))
+        if lines.isEmpty { return .text(start.isEmpty ? "The vault is empty." : "“\(start)” is empty or doesn't exist.") }
+        return .text(lines.joined(separator: "\n"))
+    }
+
+    func readNote(_ path: String, page: Int) throws -> Result {
+        let relative = try existingNote(path)
+        if relative.lowercased().hasSuffix(".ink") { return try readInk(relative, firstPage: max(1, page)) }
+        let ext = (relative as NSString).pathExtension.lowercased()
+        guard ["md", "markdown", "txt"].contains(ext) else {
+            throw Failure("“\(relative)” isn't a note (Markdown or handwritten).")
+        }
+        let text = try readText(relative)
+        let limit = 200_000
+        if text.count > limit {
+            return .text("\(relative) (first \(limit) characters of \(text.count)):\n\n" + text.prefix(limit))
+        }
+        return .text(text.isEmpty ? "(\(relative) is empty)" : text)
+    }
+
+    /// Handwritten pages are this tall (the page is `InkDocument.pageWidth` wide), roughly A4/Letter.
+    static let inkPageHeight: CGFloat = 1400
+    static let pagesPerRead = 4
+
+    func readInk(_ relative: String, firstPage: Int) throws -> Result {
+        let data = (try? Data(contentsOf: root.appendingPathComponent(relative))) ?? Data()
+        guard let document = InkDocument.decode(data) else { throw Failure("Couldn't read handwritten note “\(relative)”.") }
+        let drawing = document.pkDrawing
+        let bounds = drawing.bounds
+        guard !bounds.isNull, !drawing.strokes.isEmpty else {
+            return .text("Handwritten note “\(relative)” is empty.")
+        }
+        let pageCount = max(1, Int((bounds.maxY / Self.inkPageHeight).rounded(.up)))
+        guard firstPage <= pageCount else { throw Failure("“\(relative)” has \(pageCount) page(s).") }
+        let last = min(pageCount, firstPage + Self.pagesPerRead - 1)
+        var result = Result()
+        var note = "Handwritten note “\(relative)”, \(document.paper.rawValue) paper"
+        note += pageCount == 1 ? ", one page." : ", pages \(firstPage)–\(last) of \(pageCount)."
+        note += " The images show the pages; read the handwriting and drawings from them."
+        if last < pageCount { note += " Call read_note with page \(last + 1) for the rest." }
+        result.addText(note)
+        for index in (firstPage - 1)..<last {
+            let rect = CGRect(x: 0, y: CGFloat(index) * Self.inkPageHeight, width: InkDocument.pageWidth, height: Self.inkPageHeight)
+            guard drawing.strokes.contains(where: { $0.renderBounds.intersects(rect) }) else {
+                result.addText("Page \(index + 1) is blank.")
+                continue
+            }
+            if let png = InkSnapshot.png(drawing, rect: rect, pixelWidth: 1200) {
+                if last > firstPage { result.addText("Page \(index + 1):") }
+                result.addPNG(png)
+            }
+        }
+        return result
+    }
+
+    func search(_ query: String) throws -> Result {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else { throw Failure("The query is empty.") }
+        let notes = allNotes
+        if needle.hasPrefix("#"), !needle.contains(" ") {
+            let tag = String(needle.drop { $0 == "#" }).lowercased()
+            let index = buildIndex(notes)
+            let paths = Set(index.tags.filter { $0.key == tag || $0.key.hasPrefix(tag + "/") }.flatMap(\.value)).sorted()
+            return .text(paths.isEmpty ? "No notes tagged \(needle)." : paths.map { "\($0)  " + (index.noteTags[$0] ?? []).map { "#" + $0 }.joined(separator: " ") }.joined(separator: "\n"))
+        }
+        var lines: [String] = []
+        for note in notes where lines.count < 100 {
+            let titleHit = note.title.range(of: needle, options: [.caseInsensitive, .diacriticInsensitive]) != nil
+            if note.fileExtension == "ink" {
+                if titleHit { lines.append("\(note.path)  (handwritten; title matches)") }
+                continue
+            }
+            guard let text = try? String(contentsOf: root.appendingPathComponent(note.path), encoding: .utf8) else { continue }
+            var matched = false
+            for (number, line) in text.components(separatedBy: "\n").enumerated()
+            where line.range(of: needle, options: [.caseInsensitive, .diacriticInsensitive]) != nil {
+                lines.append("\(note.path):\(number + 1): \(line.trimmingCharacters(in: .whitespaces).prefix(240))")
+                matched = true
+                if lines.count >= 100 { break }
+            }
+            if !matched, titleHit { lines.append("\(note.path)  (title matches)") }
+        }
+        return .text(lines.isEmpty ? "No matches for “\(needle)”." : lines.joined(separator: "\n"))
+    }
+
+    private func buildIndex(_ notes: [FileNode]) -> LinkIndex {
+        var map: [String: String] = [:]
+        for note in notes where map[note.title.lowercased()] == nil { map[note.title.lowercased()] = note.path }
+        return LinkIndex.build(root: root, markdown: notes.filter { $0.fileExtension != "ink" }.map(\.path), titles: map)
+    }
+
+    func noteLinks(_ path: String) throws -> Result {
+        let relative = try existingNote(path)
+        let index = buildIndex(allNotes)
+        func list(_ paths: [String]?) -> String {
+            guard let paths, !paths.isEmpty else { return "  (none)" }
+            return paths.sorted().map { "  \($0)" }.joined(separator: "\n")
+        }
+        let tags = (index.noteTags[relative] ?? []).map { "#" + $0 }.joined(separator: " ")
+        let aliases = (index.noteAliases[relative] ?? []).joined(separator: ", ")
+        return .text("""
+        \(relative)
+        Links to:
+        \(list(index.outgoing[relative]))
+        Linked from:
+        \(list(index.backlinks[relative]))
+        Tags: \(tags.isEmpty ? "(none)" : tags)
+        Aliases: \(aliases.isEmpty ? "(none)" : aliases)
+        """)
+    }
+
+    func listTags() -> Result {
+        let index = buildIndex(allNotes)
+        let lines = index.tags
+            .map { (name: index.tagNames[$0.key] ?? $0.key, count: $0.value.count) }
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            .map { "#\($0.name)  \($0.count)" }
+        return .text(lines.isEmpty ? "No tags in the vault." : lines.joined(separator: "\n"))
+    }
+
+    // MARK: Changing
+
+    func createNote(_ path: String, content: String) throws -> Result {
+        let relative = try markdownPath(path)
+        guard !FileManager.default.fileExists(atPath: root.appendingPathComponent(relative).path) else {
+            throw Failure("“\(relative)” already exists. Use edit_note or append_to_note to change it.")
+        }
+        try write(content, to: relative)
+        return .text("Created \(relative).")
+    }
+
+    func editNote(_ path: String, old: String, new: String) throws -> Result {
+        let relative = try existingNote(path)
+        _ = try markdownPath(relative)
+        guard !old.isEmpty else { throw Failure("`old_text` is empty; use append_to_note to add text.") }
+        let text = try readText(relative)
+        let count = text.components(separatedBy: old).count - 1
+        guard count == 1 else {
+            throw Failure(count == 0
+                ? "`old_text` wasn't found in \(relative). Read the note again and copy the text exactly."
+                : "`old_text` appears \(count) times in \(relative); include more surrounding text so it's unique.")
+        }
+        try write(text.replacingOccurrences(of: old, with: new), to: relative)
+        return .text("Edited \(relative).")
+    }
+
+    func append(_ path: String, text: String) throws -> Result {
+        let relative: String
+        if let existing = try? existingNote(path) { relative = existing } else { relative = try markdownPath(path) }
+        _ = try markdownPath(relative)
+        let url = root.appendingPathComponent(relative)
+        var existing = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+        let created = !FileManager.default.fileExists(atPath: url.path)
+        if !existing.isEmpty, !existing.hasSuffix("\n") { existing += "\n" }
+        try write(existing + text + (text.hasSuffix("\n") ? "" : "\n"), to: relative)
+        return .text(created ? "Created \(relative)." : "Appended to \(relative).")
+    }
+}
+
+/// Renders handwriting as a PNG on white paper, in light-mode ink colours.
+enum InkSnapshot {
+    static func png(_ drawing: PKDrawing, rect: CGRect, pixelWidth: CGFloat) -> Data? {
+        let scale = pixelWidth / rect.width
+        let width = Int(rect.width * scale), height = Int(rect.height * scale)
+        var image: NSImage?
+        (NSAppearance(named: .aqua) ?? NSAppearance.currentDrawing()).performAsCurrentDrawingAppearance {
+            image = drawing.image(from: rect, scale: scale)
+        }
+        var proposed = CGRect(x: 0, y: 0, width: width, height: height)
+        guard let ink = image?.cgImage(forProposedRect: &proposed, context: nil, hints: nil),
+              let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: space, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)
+        else { return nil }
+        context.setFillColor(CGColor(gray: 1, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        context.interpolationQuality = .high
+        context.draw(ink, in: CGRect(x: 0, y: 0, width: width, height: height))
+        guard let output = context.makeImage() else { return nil }
+        return NSBitmapImageRep(cgImage: output).representation(using: .png, properties: [:])
+    }
+}
+#endif

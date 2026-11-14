@@ -54,6 +54,16 @@ targets:
     dependencies:
       - package: JetKit
         product: JetKit
+      - target: JetMCP
+        link: false
+    postBuildScripts:
+      # The MCP helper ships inside the app (Contents/MacOS/jet-mcp), next to Jet itself.
+      - name: Embed jet-mcp
+        script: cp -f "$BUILT_PRODUCTS_DIR/jet-mcp" "$TARGET_BUILD_DIR/$EXECUTABLE_FOLDER_PATH/jet-mcp"
+        inputFiles:
+          - $(BUILT_PRODUCTS_DIR)/jet-mcp
+        outputFiles:
+          - $(TARGET_BUILD_DIR)/$(EXECUTABLE_FOLDER_PATH)/jet-mcp
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.johnzhao.jet.mac
@@ -73,3 +83,25 @@ targets:
         # Not sandboxed: vaults can be any folder, and the AI helper is launched by other apps.
         ENABLE_APP_SANDBOX: NO
         ENABLE_HARDENED_RUNTIME: NO
+
+  JetMCP:
+    type: tool
+    platform: macOS
+    sources:
+      - Tools/jet-mcp
+    dependencies:
+      - package: JetKit
+        product: JetKit
+    settings:
+      base:
+        PRODUCT_NAME: jet-mcp
+        PRODUCT_BUNDLE_IDENTIFIER: com.johnzhao.jet.mcp
+        SWIFT_VERSION: "5.0"
+        # PencilKit wants a bundle identifier, which a bare executable gets from an embedded Info.plist.
+        GENERATE_INFOPLIST_FILE: YES
+        CREATE_INFOPLIST_SECTION_IN_BINARY: YES
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+        DEVELOPMENT_TEAM: ""
+        ENABLE_HARDENED_RUNTIME: NO
+        SKIP_INSTALL: YES
