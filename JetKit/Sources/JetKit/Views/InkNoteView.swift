@@ -22,13 +22,13 @@ struct InkNoteView: View {
             .toolbar {
                 #if os(iOS)
                 ToolbarItemGroup(placement: .primaryAction) {
-                    Button { model.mode = model.mode == .lasso ? .draw : .lasso } label: {
+                    Button { model.toggleTool(.lasso) } label: {
                         Label("Lasso select", systemImage: "lasso")
                             .symbolVariant(model.mode == .lasso ? .fill : .none)
                     }
                     .tint(model.mode == .lasso ? .accentColor : nil)
                     .help("Select handwriting to move, copy or delete it")
-                    Button { model.mode = model.mode == .insertSpace ? .draw : .insertSpace } label: {
+                    Button { model.toggleTool(.insertSpace) } label: {
                         Label("Insert space", systemImage: model.mode == .insertSpace
                               ? "arrow.up.and.down.square.fill" : "arrow.up.and.down.square")
                     }
@@ -73,8 +73,7 @@ struct InkNoteView: View {
             model: model,
             generation: model.generation,
             paper: model.paper,
-            showsToolPicker: model.showsToolPicker,
-            mode: model.mode
+            showsToolPicker: model.showsToolPicker
         )
         .ignoresSafeArea(.container, edges: .bottom)
         #else
