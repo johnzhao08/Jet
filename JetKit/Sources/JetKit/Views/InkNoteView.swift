@@ -1,11 +1,14 @@
 import SwiftUI
 import PencilKit
 
-/// A handwritten note. On iPad this is a live PencilKit canvas that is ready for the Pencil the
-/// moment it appears; on the Mac (no Pencil) it renders the same page read-only.
+/// A handwritten note, or a PDF to write on. On iPad this is a live PencilKit canvas that is ready
+/// for the Pencil the moment it appears; on the Mac (no Pencil) it renders the same pages read-only.
+/// A PDF's ink is kept beside it in a hidden `.Name.pdf.ink`, so the PDF itself never changes.
 struct InkNoteView: View {
     let session: VaultSession
     let path: String
+    /// Set when this is a PDF: its pages go under the ink.
+    let pdf: PDFPages?
 
     @State private var model: InkNoteModel
     @State private var editorID: UUID?
@@ -13,10 +16,12 @@ struct InkNoteView: View {
     @State private var imageSource: ImageSource?
     @AppStorage(InkPickerTool.storageKey) private var storedTools = InkPickerTool.encode(InkPickerTool.defaults)
 
-    init(session: VaultSession, path: String) {
+    init(session: VaultSession, path: String, pdf: PDFPages? = nil) {
         self.session = session
         self.path = path
-        _model = State(initialValue: InkNoteModel(url: session.url(for: path)))
+        self.pdf = pdf
+        let notes = pdf == nil ? path : VaultSession.annotationsPath(for: path)
+        _model = State(initialValue: InkNoteModel(url: session.url(for: notes)))
     }
 
     var body: some View {
@@ -31,12 +36,14 @@ struct InkNoteView: View {
                     }
                     .tint(model.mode == .lasso ? .accentColor : nil)
                     .help("Select handwriting to move, copy or delete it")
-                    Button { model.toggleTool(.insertSpace) } label: {
-                        Label("Insert space", systemImage: model.mode == .insertSpace
-                              ? "arrow.up.and.down.square.fill" : "arrow.up.and.down.square")
+                    if pdf == nil {
+                        Button { model.toggleTool(.insertSpace) } label: {
+                            Label("Insert space", systemImage: model.mode == .insertSpace
+                                  ? "arrow.up.and.down.square.fill" : "arrow.up.and.down.square")
+                        }
+                        .tint(model.mode == .insertSpace ? .accentColor : nil)
+                        .help("Drag to insert or remove space")
                     }
-                    .tint(model.mode == .insertSpace ? .accentColor : nil)
-                    .help("Drag to insert or remove space")
                     Menu {
                         ImageSourceButtons(source: $imageSource)
                     } label: {
@@ -53,9 +60,20 @@ struct InkNoteView: View {
                 #endif
                 ToolbarItem(placement: .primaryAction) {
                     Menu {
-                        Picker("Paper", selection: $model.paper) {
-                            ForEach(PaperStyle.allCases) { style in
-                                Text(style.label).tag(style)
+                        if let pdf {
+                            ShareLink(item: AnnotatedPDF(pages: pdf, notes: model.url, root: session.root,
+                                                         name: (path as NSString).lastPathComponent),
+                                      preview: SharePreview((path as NSString).lastPathComponent)) {
+                                Label("Share with Annotations…", systemImage: "square.and.arrow.up")
+                            }
+                            ShareLink(item: session.url(for: path)) {
+                                Label("Share Original PDF…", systemImage: "doc")
+                            }
+                        } else {
+                            Picker("Paper", selection: $model.paper) {
+                                ForEach(PaperStyle.allCases) { style in
+                                    Text(style.label).tag(style)
+                                }
                             }
                         }
                         #if os(iOS)
@@ -67,7 +85,7 @@ struct InkNoteView: View {
                     } label: {
                         Label("Page", systemImage: "ellipsis.circle")
                     }
-                    .help("Paper style and pens")
+                    .help(pdf == nil ? "Paper style and pens" : "Share and pens")
                 }
             }
             .onAppear {
@@ -91,6 +109,7 @@ struct InkNoteView: View {
         InkCanvasRepresentable(
             model: model,
             root: session.root,
+            pdf: pdf,
             generation: model.generation,
             paper: model.paper,
             // The floating tool picker would sit on top of sheets, so it steps aside while one is up.
@@ -99,9 +118,19 @@ struct InkNoteView: View {
         )
         .ignoresSafeArea(.container, edges: .bottom)
         #else
-        InkPagesView(drawing: model.drawing, images: model.images, root: session.root, paper: model.paper, generation: model.generation)
+        Group {
+            if let pdf {
+                PDFPagesView(pages: pdf, drawing: model.drawing, images: model.images, root: session.root,
+                             generation: model.generation)
+            } else {
+                InkPagesView(drawing: model.drawing, images: model.images, root: session.root, paper: model.paper,
+                             generation: model.generation)
+            }
+        }
             .safeAreaInset(edge: .bottom) {
-                Label("Handwriting is view-only on the Mac. Write on iPad and sync.", systemImage: "applepencil")
+                Label(pdf == nil ? "Handwriting is view-only on the Mac. Write on iPad and sync."
+                                 : "Annotations are view-only on the Mac. Write on the PDF on iPad and sync.",
+                      systemImage: "applepencil")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 14)
@@ -316,6 +345,81 @@ struct InkEmbedView: View {
             image = InkRenderer.compose(document.pkDrawing, images: document.images ?? [], root: root, rect: rect,
                                         scale: 2, dark: colorScheme == .dark)
                 .map { InkRenderer.platformImage($0, scale: 2) }
+        }
+    }
+}
+
+/// A PDF with its annotations, read-only (the Mac): each page rendered with its ink, lazily.
+struct PDFPagesView: View {
+    let pages: PDFPages
+    let drawing: PKDrawing
+    let images: [InkImage]
+    let root: URL
+    let generation: Int
+
+    var body: some View {
+        GeometryReader { geometry in
+            let scale = max((geometry.size.width - 32) / InkDocument.pageWidth, 0.01)
+            ScrollView {
+                LazyVStack(spacing: PDFPages.gap * scale) {
+                    ForEach(pages.frames.indices, id: \.self) { index in
+                        PDFPageTile(pages: pages, index: index, drawing: drawing, images: images, root: root,
+                                    generation: generation)
+                            .frame(width: pages.frames[index].width * scale, height: pages.frames[index].height * scale)
+                            .shadow(color: .black.opacity(0.15), radius: 3, y: 1)
+                    }
+                }
+                .padding(.vertical, PDFPages.gap * scale)
+                .frame(maxWidth: .infinity)
+            }
+            .background(Color.gray.opacity(0.18))
+        }
+    }
+}
+
+private struct PDFPageTile: View {
+    let pages: PDFPages
+    let index: Int
+    let drawing: PKDrawing
+    let images: [InkImage]
+    let root: URL
+    let generation: Int
+    @State private var image: PlatformImage?
+    @Environment(\.displayScale) private var displayScale
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack {
+                Color.white
+                if let image { Image(platformImage: image).resizable() }
+            }
+            .task(id: "\(generation)-\(Int(geometry.size.width))-\(images.count)") {
+                let scale = geometry.size.width / InkDocument.pageWidth * displayScale
+                let rendered = pages.render(index, drawing: drawing, images: images, root: root, scale: scale)
+                image = rendered.map { InkRenderer.platformImage($0, scale: displayScale) }
+            }
+        }
+    }
+}
+
+/// A PDF with its annotations drawn in, made when it's shared.
+struct AnnotatedPDF: Transferable {
+    let pages: PDFPages
+    let notes: URL
+    let root: URL
+    let name: String
+
+    static var transferRepresentation: some TransferRepresentation {
+        FileRepresentation(exportedContentType: .pdf) { item in
+            let document = InkDocument.decode((try? Data(contentsOf: item.notes)) ?? Data()) ?? InkDocument()
+            guard let data = item.pages.annotatedPDF(drawing: document.pkDrawing, images: document.images ?? [], root: item.root)
+            else { throw CocoaError(.fileWriteUnknown) }
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let base = (item.name as NSString).deletingPathExtension
+            let url = folder.appendingPathComponent("\(base) (annotated).pdf")
+            try data.write(to: url)
+            return SentTransferredFile(url)
         }
     }
 }

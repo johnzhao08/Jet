@@ -110,6 +110,9 @@ private struct SidebarView: View {
     @State private var deleting: FileNode?
     /// The parent folder of a folder being named, while the "New folder" prompt is up.
     @State private var newFolderParent: String?
+    /// The "Import files" picker, and the folder picked files go into.
+    @State private var importing = false
+    @State private var importFolder = ""
     @State private var newFolderName = ""
 
     var body: some View {
@@ -155,7 +158,7 @@ private struct SidebarView: View {
                 ForEach(hits) { hit in
                     VStack(alignment: .leading, spacing: 2) {
                         Label(((hit.path as NSString).lastPathComponent as NSString).deletingPathExtension,
-                              systemImage: hit.path.hasSuffix(".ink") ? "pencil.tip" : "doc.text")
+                              systemImage: FileKind(path: hit.path).symbol)
                         if !hit.snippet.isEmpty {
                             Text(hit.snippet).font(.caption).foregroundStyle(.secondary).lineLimit(2)
                         }
@@ -183,6 +186,9 @@ private struct SidebarView: View {
                     Divider()
                     Button { askForFolder(in: session.targetFolder) } label: {
                         Label("Folder", systemImage: "folder.badge.plus")
+                    }
+                    Button { importFiles(into: session.targetFolder) } label: {
+                        Label("Import Files…", systemImage: "square.and.arrow.down")
                     }
                 } label: {
                     Label("New", systemImage: "square.and.pencil")
@@ -220,6 +226,13 @@ private struct SidebarView: View {
         .safeAreaInset(edge: SyncBar.edge) {
             SyncBar(session: session, showSyncSettings: $showSyncSettings, showConnectAI: $showConnectAI)
         }
+        .fileImporter(
+            isPresented: $importing,
+            allowedContentTypes: [.item],
+            allowsMultipleSelection: true
+        ) { result in
+            if case .success(let urls) = result { session.importFiles(urls, into: importFolder) }
+        }
         .alert("New folder", isPresented: Binding(get: { newFolderParent != nil }, set: { if !$0 { newFolderParent = nil } })) {
             TextField("Folder name", text: $newFolderName)
             Button("Create") {
@@ -251,6 +264,11 @@ private struct SidebarView: View {
         }
     }
 
+    private func importFiles(into folder: String) {
+        importFolder = folder
+        importing = true
+    }
+
     private func askForFolder(in parent: String) {
         newFolderName = ""
         newFolderParent = parent
@@ -267,6 +285,9 @@ private struct SidebarView: View {
         }
         Button { askForFolder(in: folder) } label: {
             Label("New folder here", systemImage: "folder.badge.plus")
+        }
+        Button { importFiles(into: folder) } label: {
+            Label("Import files here…", systemImage: "square.and.arrow.down")
         }
         Divider()
         Button {
@@ -285,13 +306,7 @@ private struct FileRow: View {
     let node: FileNode
 
     private var icon: String {
-        if node.isDirectory { return "folder" }
-        switch node.fileExtension {
-        case "ink": return "pencil.tip"
-        case "md", "markdown": return "doc.text"
-        case "png", "jpg", "jpeg", "gif", "heic", "webp": return "photo"
-        default: return "doc"
-        }
+        node.isDirectory ? "folder" : FileKind(path: node.path).symbol
     }
 
     var body: some View {

@@ -1,6 +1,7 @@
 #if os(macOS)
 import AppKit
 import Foundation
+import PDFKit
 import PencilKit
 
 /// What AI assistants can do with a vault through Jet's MCP helper (`jet-mcp`).
@@ -41,12 +42,12 @@ public struct VaultTools {
 
     public static let definitions: [[String: Any]] = [
         tool("list_notes",
-             "List the notes and folders in the Jet vault (or in one folder of it). Markdown notes end in .md; handwritten notes end in .ink and are drawn with Apple Pencil on iPad.",
+             "List the notes and folders in the Jet vault (or in one folder of it). Markdown notes end in .md; handwritten notes end in .ink and are drawn with Apple Pencil on iPad. PDFs (which may have handwritten annotations) and other files are listed too.",
              ["folder": ["type": "string", "description": "Folder path relative to the vault root. Omit for the whole vault."]]),
         tool("read_note",
-             "Read a note. Markdown notes come back as text. Handwritten (.ink) notes come back as images of their pages: read the handwriting and drawings from the images. Long handwritten notes are split into pages; ask for later pages with `page`. A note can be given by path (\"Projects/Jet.md\") or just its title (\"Jet\").",
+             "Read a note. Markdown and other text files come back as text. Handwritten (.ink) notes come back as images of their pages: read the handwriting and drawings from the images. PDFs come back as their text plus images of their pages, including any handwriting on them. Long handwritten notes and PDFs are split into pages; ask for later pages with `page`. A note can be given by path (\"Projects/Jet.md\") or just its title (\"Jet\").",
              ["path": ["type": "string", "description": "Note path relative to the vault root, or the note's title."],
-              "page": ["type": "integer", "description": "Handwritten notes only: the first page to return (1-based). Default 1."]],
+              "page": ["type": "integer", "description": "Handwritten notes and PDFs only: the first page to return (1-based). Default 1."]],
              required: ["path"]),
         tool("search_notes",
              "Search the text of every Markdown note and the titles of all notes. Start the query with # to find notes with a tag (\"#project\" also matches nested tags like #project/jet). Handwritten notes are only matched by title; open them with read_note to see their contents.",
@@ -186,7 +187,7 @@ public struct VaultTools {
                 } else if VaultSession.noteExtensions.contains(node.fileExtension) {
                     lines.append(node.fileExtension == "ink" ? "\(node.path)  (handwritten)" : node.path)
                 } else {
-                    lines.append("\(node.path)  (file)")
+                    lines.append("\(node.path)  (\(FileKind(path: node.path) == .pdf ? "PDF" : "file"))")
                 }
             }
         }
@@ -198,9 +199,10 @@ public struct VaultTools {
     func readNote(_ path: String, page: Int) throws -> Result {
         let relative = try existingNote(path)
         if relative.lowercased().hasSuffix(".ink") { return try readInk(relative, firstPage: max(1, page)) }
-        let ext = (relative as NSString).pathExtension.lowercased()
-        guard ["md", "markdown", "txt"].contains(ext) else {
-            throw Failure("“\(relative)” isn't a note (Markdown or handwritten).")
+        let kind = FileKind(path: relative)
+        if kind == .pdf { return try readPDF(relative, firstPage: max(1, page)) }
+        guard [.markdown, .text].contains(kind) else {
+            throw Failure("“\(relative)” isn't a note, text file or PDF.")
         }
         let text = try readText(relative)
         let limit = 200_000
@@ -243,6 +245,40 @@ public struct VaultTools {
                 if last > firstPage { result.addText("Page \(index + 1):") }
                 result.addPNG(png)
             }
+        }
+        return result
+    }
+
+    /// A PDF's text and, as images, its pages with any handwriting on them.
+    func readPDF(_ relative: String, firstPage: Int) throws -> Result {
+        let url = root.appendingPathComponent(relative)
+        guard let pages = PDFPages(url: url) else { throw Failure("Couldn't open “\(relative)” (it may be locked or damaged).") }
+        guard firstPage <= pages.count else { throw Failure("“\(relative)” has \(pages.count) page(s).") }
+        let notes = (try? Data(contentsOf: root.appendingPathComponent(VaultSession.annotationsPath(for: relative)))) ?? Data()
+        let document = InkDocument.decode(notes) ?? InkDocument()
+        let drawing = document.pkDrawing
+        let images = document.images ?? []
+        let text = PDFDocument(url: url)
+        let last = min(pages.count, firstPage + Self.pagesPerRead - 1)
+
+        var result = Result()
+        var intro = "PDF “\(relative)”, "
+        intro += pages.count == 1 ? "one page." : "pages \(firstPage)–\(last) of \(pages.count)."
+        intro += " Each page's text is followed by an image of the page, which also shows any handwritten annotations."
+        if last < pages.count { intro += " Call read_note with page \(last + 1) for the rest." }
+        result.addText(intro)
+        for index in (firstPage - 1)..<last {
+            let pageText = (text?.page(at: index)?.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let annotated = drawing.strokes.contains { $0.renderBounds.intersects(pages.frames[index]) }
+            var header = "Page \(index + 1)"
+            if annotated { header += " (has handwritten annotations)" }
+            result.addText(header + ":\n" + (pageText.isEmpty ? "(no text layer; read it from the image)" : String(pageText.prefix(8000))))
+            var png: Data?
+            (NSAppearance(named: .aqua) ?? NSAppearance.currentDrawing()).performAsCurrentDrawingAppearance {
+                png = pages.render(index, drawing: drawing, images: images, root: root, scale: 1200 / InkDocument.pageWidth)
+                    .flatMap { NSBitmapImageRep(cgImage: $0).representation(using: .png, properties: [:]) }
+            }
+            if let png { result.addPNG(png) }
         }
         return result
     }

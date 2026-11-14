@@ -11,6 +11,12 @@ public struct VaultRef: Codable, Identifiable, Hashable, Sendable {
     public var name: String
     public var location: String
 
+    public init(id: UUID = UUID(), name: String, location: String) {
+        self.id = id
+        self.name = name
+        self.location = location
+    }
+
     public var url: URL {
         #if os(macOS)
         URL(fileURLWithPath: location)
@@ -25,6 +31,8 @@ public struct VaultRef: Codable, Identifiable, Hashable, Sendable {
 public final class AppModel {
     public var vaults: [VaultRef] = []
     public var session: VaultSession?
+    /// Files handed to Jet by another app before a vault was open; imported once one is.
+    public var pendingImports: [URL] = []
 
     private static let vaultsKey = "jet.vaults"
     private static let lastVaultKey = "jet.lastVault"
@@ -39,6 +47,31 @@ public final class AppModel {
            FileManager.default.fileExists(atPath: ref.url.path) {
             session = VaultSession(ref: ref)
         }
+    }
+
+    /// A file another app opened in Jet (share sheet, Files' "Open in"): copied into the open vault.
+    public func receive(_ url: URL) {
+        guard url.isFileURL else { return }
+        if let session {
+            session.importFiles([url])
+            Self.removeInboxCopy(url)
+        } else {
+            pendingImports.append(url)
+        }
+    }
+
+    public func importPending() {
+        guard let session, !pendingImports.isEmpty else { return }
+        let urls = pendingImports
+        pendingImports = []
+        session.importFiles(urls)
+        urls.forEach(Self.removeInboxCopy)
+    }
+
+    /// iPadOS sometimes hands over a copy in Documents/Inbox; once imported it's just clutter.
+    private static func removeInboxCopy(_ url: URL) {
+        let inbox = vaultsDirectory.appendingPathComponent("Inbox").standardizedFileURL.path
+        if url.standardizedFileURL.path.hasPrefix(inbox + "/") { try? FileManager.default.removeItem(at: url) }
     }
 
     /// Where new vaults are created.

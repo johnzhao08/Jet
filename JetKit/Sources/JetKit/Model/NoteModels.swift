@@ -243,3 +243,38 @@ public enum InkPickerTool: String, CaseIterable, Identifiable, Sendable {
         tools.map(\.rawValue).joined(separator: ",")
     }
 }
+
+/// How Jet opens a file, by its extension.
+public enum FileKind: Sendable {
+    case ink, markdown, text, pdf, image, other
+
+    public nonisolated static let textExtensions: Set<String> = [
+        "txt", "text", "csv", "tsv", "json", "yaml", "yml", "toml", "xml", "log", "ini", "cfg", "conf", "env",
+        "sh", "zsh", "bash", "fish", "py", "js", "mjs", "ts", "tsx", "jsx", "swift", "c", "h", "cc", "cpp", "hpp",
+        "m", "mm", "java", "kt", "kts", "go", "rs", "rb", "php", "css", "scss", "less", "sql", "tex", "bib",
+        "org", "rst", "adoc", "lua", "r", "dart", "scala", "gradle", "properties", "srt", "vtt",
+    ]
+
+    public init(path: String) {
+        let ext = (path as NSString).pathExtension.lowercased()
+        switch ext {
+        case "ink": self = .ink
+        case "md", "markdown": self = .markdown
+        case "pdf": self = .pdf
+        case _ where ImageFiles.extensions.contains(ext): self = .image
+        case _ where Self.textExtensions.contains(ext): self = .text
+        default: self = .other
+        }
+    }
+
+    public var symbol: String {
+        switch self {
+        case .ink: "pencil.tip"
+        case .markdown: "doc.text"
+        case .text: "doc.plaintext"
+        case .pdf: "doc.richtext"
+        case .image: "photo"
+        case .other: "doc"
+        }
+    }
+}

@@ -2,6 +2,7 @@ import Foundation
 import PencilKit
 import AppKit
 import ImageIO
+import CoreText
 import JetKit
 
 // End-to-end check of the sync engine: two "devices" (clones) syncing through a local bare repo.
@@ -321,6 +322,77 @@ do {
                                                  "params": ["name": "read_note", "arguments": ["path": "Photo"]]])
     let content = ((reply?["result"] as? [String: Any])?["content"] as? [[String: Any]]) ?? []
     expect(content.contains { $0["type"] as? String == "image" }, "read_note renders a page that only has a picture")
+} catch {
+    failures += 1
+    print("  FAIL  threw: \(error.localizedDescription)")
+}
+
+print("13. PDFs and other files")
+do {
+    // A two-page PDF with text; the second page is landscape and rotated 90°, so it shows portrait.
+    func makePDF(at url: URL) {
+        let context = CGContext(url as CFURL, mediaBox: nil, nil)!
+        var letter = CGRect(x: 0, y: 0, width: 612, height: 792)
+        context.beginPage(mediaBox: &letter)
+        let line = CTLineCreateWithAttributedString(NSAttributedString(string: "Lecture 4: Entropy",
+                                                    attributes: [.font: NSFont.systemFont(ofSize: 24)]))
+        context.textPosition = CGPoint(x: 72, y: 700)
+        CTLineDraw(line, context)
+        context.endPage()
+        var landscape = CGRect(x: 0, y: 0, width: 792, height: 612)
+        context.beginPDFPage([kCGPDFContextMediaBox as String: NSData(bytes: &landscape, length: MemoryLayout<CGRect>.size),
+                              "Rotate": 90] as CFDictionary)
+        context.endPDFPage()
+        context.closePDF()
+    }
+    let vault = work.appendingPathComponent("files")
+    try fm.createDirectory(at: vault.appendingPathComponent("Course"), withIntermediateDirectories: true)
+    let pdfURL = vault.appendingPathComponent("Course/Lecture.pdf")
+    makePDF(at: pdfURL)
+    guard let pages = PDFPages(url: pdfURL) else { throw CocoaError(.fileReadCorruptFile) }
+    expect(pages.count == 2, "PDF pages are laid out")
+    expect(abs(pages.frames[0].height - 1024 * 792 / 612) < 0.5 && pages.frames[0].minY == PDFPages.gap,
+           "pages are scaled to the page width, below a gap")
+    expect(pages.frames[1].minY > pages.frames[0].maxY, "pages are stacked")
+    expect(VaultSession.annotationsPath(for: "Course/Lecture.pdf") == "Course/.Lecture.pdf.ink"
+           && VaultSession.annotationsPath(for: "A.pdf") == ".A.pdf.ink", "annotations live in a hidden file beside the PDF")
+
+    // Ink on page 1 shows up in the annotated export and in what the AI helper sees.
+    let ink = InkDocument(paper: .blank, drawing: PKDrawing(strokes: [stroke(y: 300, at: Date())]).dataRepresentation())
+    try ink.encoded().write(to: vault.appendingPathComponent("Course/.Lecture.pdf.ink"))
+    let exported = pages.annotatedPDF(drawing: ink.pkDrawing, images: [], root: vault)
+    let reread = exported.flatMap { CGDataProvider(data: $0 as CFData) }.flatMap(CGPDFDocument.init)
+    expect(reread?.numberOfPages == 2, "the annotated PDF keeps every page")
+    let rendered = pages.render(0, drawing: ink.pkDrawing, images: [], root: vault, scale: 1)
+    expect(rendered?.width == 1024, "a page renders at page width")
+
+    let reply = MCPServer(vault: vault).handle(["jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                                                 "params": ["name": "read_note", "arguments": ["path": "Course/Lecture.pdf"]]])
+    let content = ((reply?["result"] as? [String: Any])?["content"] as? [[String: Any]]) ?? []
+    let text = content.compactMap { $0["text"] as? String }.joined(separator: "\n")
+    expect(text.contains("Entropy") && text.contains("has handwritten annotations"), "read_note gives a PDF's text and notes its annotations")
+    expect(content.filter { $0["type"] as? String == "image" }.count == 2, "read_note shows each PDF page as an image")
+    let list = MCPServer(vault: vault).handle(["jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                                                "params": ["name": "list_notes", "arguments": [:]]])
+    let listed = (((list?["result"] as? [String: Any])?["content"] as? [[String: Any]]) ?? []).compactMap { $0["text"] as? String }.joined()
+    expect(listed.contains("Course/Lecture.pdf  (PDF)") && !listed.contains(".Lecture"), "list_notes marks PDFs and hides annotation files")
+
+    expect(FileKind(path: "a/b.PDF") == .pdf && FileKind(path: "x.json") == .text && FileKind(path: "y.docx") == .other
+           && FileKind(path: "z.HEIC") == .image, "file kinds by extension")
+
+    // Importing copies under a free name; renaming and deleting a PDF take its annotations along.
+    try MainActor.assumeIsolated {
+        let session = VaultSession(ref: VaultRef(name: "files", location: vault.path))
+        let outside = work.appendingPathComponent("Lecture.pdf")
+        try fm.copyItem(at: pdfURL, to: outside)
+        let imported = session.importFiles([outside], into: "Course")
+        expect(imported == ["Course/Lecture 2.pdf"] && session.selection == "Course/Lecture 2.pdf", "import keeps the name, made unique, and opens it")
+        session.rename("Course/Lecture.pdf", to: "Thermo")
+        expect(session.exists("Course/Thermo.pdf") && session.exists("Course/.Thermo.pdf.ink") && !session.exists("Course/.Lecture.pdf.ink"),
+               "renaming a PDF moves its annotations")
+        session.delete("Course/Thermo.pdf")
+        expect(!session.exists("Course/.Thermo.pdf.ink"), "deleting a PDF deletes its annotations")
+    }
 } catch {
     failures += 1
     print("  FAIL  threw: \(error.localizedDescription)")
