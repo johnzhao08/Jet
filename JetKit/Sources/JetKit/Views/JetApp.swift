@@ -51,6 +51,12 @@ final class JetAppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Files opened with Jet from Finder or dropped on its Dock icon.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        MainActor.assumeIsolated { OpenRequests.shared.deliver(urls) }
+        if ProcessInfo.processInfo.environment["JET_SNAPSHOT"] == nil { NSApp.activate(ignoringOtherApps: true) }
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 }
 #endif
@@ -70,6 +76,8 @@ struct RootView: View {
         }
         #if os(iOS)
         .onOpenURL { url in app.receive(url) }
+        #else
+        .onAppear { OpenRequests.shared.handler = { urls in app.receive(urls) } }
         #endif
     }
 }

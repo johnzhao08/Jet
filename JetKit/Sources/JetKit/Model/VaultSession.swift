@@ -330,6 +330,73 @@ public final class VaultSession {
         return path
     }
 
+    /// GitHub refuses files over 100 MB, which would stop the vault syncing; it warns from 50 MB.
+    public nonisolated static let largeFileWarning = 50_000_000
+    public nonisolated static let largestSyncableFile = 100_000_000
+
+    /// Files waiting on a decision because some are big (see `requestImport`).
+    public struct ImportReview: Identifiable, Sendable {
+        public let id = UUID()
+        public var folder: String
+        public var normal: [URL]
+        public var large: [(url: URL, size: Int)]
+        public var tooLarge: [(url: URL, size: Int)]
+    }
+
+    /// Imports that need the user's say-so: shown by the vault window.
+    public var importReview: ImportReview?
+
+    /// Imports files, checking sizes first: anything over 100 MB is refused (git sync would fail on
+    /// it), and 50–100 MB files are only imported once the user confirms.
+    public func requestImport(_ urls: [URL], into folder: String? = nil) {
+        let folder = folder ?? targetFolder
+        var review = ImportReview(folder: folder, normal: [], large: [], tooLarge: [])
+        for url in urls {
+            let size = Self.size(of: url)
+            if size > Self.largestSyncableFile { review.tooLarge.append((url, size)) }
+            else if size > Self.largeFileWarning { review.large.append((url, size)) }
+            else { review.normal.append(url) }
+        }
+        if review.large.isEmpty && review.tooLarge.isEmpty {
+            finishImport(review.normal, into: folder)
+        } else {
+            importReview = review
+        }
+    }
+
+    /// Completes an `importReview`, with or without its large files.
+    public func resolveImport(includeLarge: Bool) {
+        guard let review = importReview else { return }
+        importReview = nil
+        finishImport(review.normal + (includeLarge ? review.large.map(\.url) : []), into: review.folder)
+    }
+
+    private func finishImport(_ urls: [URL], into folder: String) {
+        guard !urls.isEmpty else { return }
+        importFiles(urls, into: folder)
+        // Copies iPadOS left in Documents/Inbox, or that a drop made in the temporary folder.
+        let inbox = AppModel.vaultsDirectory.appendingPathComponent("Inbox").standardizedFileURL.path + "/"
+        let temporary = FileManager.default.temporaryDirectory.appendingPathComponent("JetDrops").standardizedFileURL.path + "/"
+        for url in urls where url.standardizedFileURL.path.hasPrefix(inbox) || url.standardizedFileURL.path.hasPrefix(temporary) {
+            try? FileManager.default.removeItem(at: url)
+        }
+    }
+
+    /// Bytes in a file, or in everything inside a folder.
+    nonisolated static func size(of url: URL) -> Int {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        let keys: Set<URLResourceKey> = [.isDirectoryKey, .totalFileSizeKey, .fileSizeKey]
+        guard let values = try? url.resourceValues(forKeys: keys) else { return 0 }
+        if values.isDirectory != true { return values.totalFileSize ?? values.fileSize ?? 0 }
+        let items = FileManager.default.enumerator(at: url, includingPropertiesForKeys: Array(keys))
+        var total = 0
+        while let item = items?.nextObject() as? URL {
+            total += (try? item.resourceValues(forKeys: keys)).flatMap { $0.totalFileSize ?? $0.fileSize } ?? 0
+        }
+        return total
+    }
+
     /// Copies files from elsewhere (Files, another app, Finder) into `folder`, keeping their names
     /// (made unique), and opens the last one. Returns the new paths.
     @discardableResult

@@ -398,5 +398,54 @@ do {
     print("  FAIL  threw: \(error.localizedDescription)")
 }
 
+print("14. Opening and importing files from elsewhere")
+do {
+    let vault = work.appendingPathComponent("drops")
+    try fm.createDirectory(at: vault.appendingPathComponent("Inbox"), withIntermediateDirectories: true)
+    try "# Inside".write(to: vault.appendingPathComponent("Inbox/Inside.md"), atomically: true, encoding: .utf8)
+    let outside = work.appendingPathComponent("outside")
+    try fm.createDirectory(at: outside, withIntermediateDirectories: true)
+    func sparse(_ name: String, megabytes: Int) throws -> URL {
+        let url = outside.appendingPathComponent(name)
+        fm.createFile(atPath: url.path, contents: nil)
+        let handle = try FileHandle(forWritingTo: url)
+        try handle.truncate(atOffset: UInt64(megabytes) * 1_000_000)
+        try handle.close()
+        return url
+    }
+    let small = outside.appendingPathComponent("Small.md")
+    try "hi".write(to: small, atomically: true, encoding: .utf8)
+    let large = try sparse("Slides.pdf", megabytes: 60)
+    let huge = try sparse("Video.mov", megabytes: 120)
+
+    try MainActor.assumeIsolated {
+        let app = AppModel()
+        let ref = VaultRef(name: "drops", location: vault.path)
+        app.vaults = [ref]
+        app.open(ref)
+        guard let session = app.session else { throw CocoaError(.fileNoSuchFile) }
+
+        app.receive([vault.appendingPathComponent("Inbox/Inside.md")])
+        expect(session.selection == "Inbox/Inside.md" && !session.exists("Inside.md"), "a file already in the vault opens in place, not copied")
+
+        app.receive([small], into: "Inbox")
+        expect(session.exists("Inbox/Small.md") && session.importReview == nil, "a small file from outside is imported straight away")
+
+        app.receive([large, huge], into: "Inbox")
+        expect(session.importReview?.large.count == 1 && session.importReview?.tooLarge.count == 1 && !session.exists("Inbox/Slides.pdf"),
+               "50-100 MB files wait for confirmation; files over 100 MB are held back")
+        session.resolveImport(includeLarge: true)
+        expect(session.exists("Inbox/Slides.pdf") && !session.exists("Inbox/Video.mov"), "confirming imports the large file but never the one over 100 MB")
+
+        app.receive([huge])
+        session.resolveImport(includeLarge: true)
+        expect(!session.exists("Video.mov"), "a file over 100 MB on its own is refused too")
+        expect(app.locate(vault.appendingPathComponent(".git/config")) == nil, "hidden files in a vault aren't opened as notes")
+    }
+} catch {
+    failures += 1
+    print("  FAIL  threw: \(error.localizedDescription)")
+}
+
 print(failures == 0 ? "\nAll checks passed." : "\n\(failures) check(s) failed.")
 exit(failures == 0 ? 0 : 1)

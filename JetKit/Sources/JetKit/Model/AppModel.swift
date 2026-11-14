@@ -49,23 +49,52 @@ public final class AppModel {
         }
     }
 
-    /// A file another app opened in Jet (share sheet, Files' "Open in"): copied into the open vault.
-    public func receive(_ url: URL) {
-        guard url.isFileURL else { return }
-        if let session {
-            session.importFiles([url])
-            Self.removeInboxCopy(url)
-        } else {
-            pendingImports.append(url)
+    /// Files opened in Jet from elsewhere: Finder (Open With, a double-click, the Dock icon), another
+    /// app's share sheet or "Open in", or dropped on the window. A file that's already in one of your
+    /// vaults opens right there (switching vault if needed); anything else is copied into the open
+    /// vault, into `folder` if given.
+    public func receive(_ urls: [URL], into folder: String? = nil) {
+        var outside: [URL] = []
+        var opened = false
+        for url in urls where url.isFileURL {
+            if !opened, let (ref, path) = locate(url) {
+                if session?.ref.id != ref.id { open(ref) }
+                session?.refreshTree()
+                session?.selection = path
+                opened = true
+            } else if locate(url) == nil {
+                outside.append(url)
+            }
         }
+        guard !outside.isEmpty else { return }
+        if let session {
+            session.requestImport(outside, into: folder)
+        } else {
+            pendingImports += outside
+        }
+    }
+
+    public func receive(_ url: URL) { receive([url]) }
+
+    /// The vault holding `url` and its path inside it, if it's in one of the vaults Jet knows.
+    public func locate(_ url: URL) -> (VaultRef, String)? {
+        let path = url.standardizedFileURL.resolvingSymlinksInPath().path
+        for ref in vaults {
+            let root = ref.url.standardizedFileURL.resolvingSymlinksInPath().path
+            guard path.hasPrefix(root + "/") else { continue }
+            let relative = String(path.dropFirst(root.count + 1))
+            // Hidden things (.git, a PDF's annotations) aren't opened as notes.
+            guard !relative.split(separator: "/").contains(where: { $0.hasPrefix(".") }) else { return nil }
+            return (ref, relative)
+        }
+        return nil
     }
 
     public func importPending() {
         guard let session, !pendingImports.isEmpty else { return }
         let urls = pendingImports
         pendingImports = []
-        session.importFiles(urls)
-        urls.forEach(Self.removeInboxCopy)
+        session.requestImport(urls)
     }
 
     /// iPadOS sometimes hands over a copy in Documents/Inbox; once imported it's just clutter.

@@ -15,6 +15,7 @@ struct VaultView: View {
     @State private var newNoteName = ""
     @State private var showConnectAI = false
     @State private var columns = NavigationSplitViewVisibility.automatic
+    @State private var dropTargeted = false
 
     private var author: GitAuthor { GitAuthor(name: app.authorName, email: app.authorEmail) }
 
@@ -37,6 +38,33 @@ struct VaultView: View {
                     Button("New text note") { session.requestNewNote(kind: .markdown) }
                 }
             }
+        }
+        // Files dropped anywhere on the window: opened if they're already in a vault, else imported.
+        .onDrop(of: FileDrop.types, isTargeted: $dropTargeted) { providers in
+            FileDrop.handle(providers) { urls in app.receive(urls) }
+        }
+        .overlay {
+            if dropTargeted {
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(Color.accentColor, lineWidth: 3)
+                    .background(Color.accentColor.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+                    .padding(4)
+                    .allowsHitTesting(false)
+            }
+        }
+        .alert(
+            session.importReview.map { $0.tooLarge.isEmpty ? "Import large files?" : ($0.large.isEmpty ? "Files too large to sync" : "Some files are too large") } ?? "",
+            isPresented: Binding(get: { session.importReview != nil }, set: { if !$0 { session.importReview = nil } }),
+            presenting: session.importReview
+        ) { review in
+            if !review.large.isEmpty {
+                Button("Import Anyway") { session.resolveImport(includeLarge: true) }
+                Button(review.normal.isEmpty ? "Cancel" : "Skip Large Files", role: .cancel) { session.resolveImport(includeLarge: false) }
+            } else {
+                Button("OK", role: .cancel) { session.resolveImport(includeLarge: false) }
+            }
+        } message: { review in
+            Text(review.message)
         }
         .sheet(isPresented: $showSyncSettings) { SyncSettingsView(session: session) }
         .sheet(isPresented: $showQuickOpen) { QuickOpenView(session: session) }
@@ -122,6 +150,10 @@ private struct SidebarView: View {
                     OutlineGroup(session.tree, children: \.children) { node in
                         FileRow(node: node)
                             .contextMenu { menu(for: node) }
+                            .onDrop(of: node.isDirectory ? FileDrop.types : [], isTargeted: nil) { providers in
+                                // Dropped on a folder: goes into that folder.
+                                FileDrop.handle(providers) { urls in app.receive(urls, into: node.path) }
+                            }
                     }
                 } header: {
                     HStack {
@@ -231,7 +263,7 @@ private struct SidebarView: View {
             allowedContentTypes: [.item],
             allowsMultipleSelection: true
         ) { result in
-            if case .success(let urls) = result { session.importFiles(urls, into: importFolder) }
+            if case .success(let urls) = result { session.requestImport(urls, into: importFolder) }
         }
         .alert("New folder", isPresented: Binding(get: { newFolderParent != nil }, set: { if !$0 { newFolderParent = nil } })) {
             TextField("Folder name", text: $newFolderName)
