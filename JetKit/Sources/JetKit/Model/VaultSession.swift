@@ -32,6 +32,11 @@ public struct FileNode: Identifiable, Hashable, Sendable {
     }
 }
 
+public struct NewNoteRequest: Equatable, Sendable {
+    public let kind: NoteKind
+    public let folder: String
+}
+
 public struct SearchHit: Identifiable, Hashable, Sendable {
     public let path: String
     public let snippet: String
@@ -75,6 +80,8 @@ public final class VaultSession {
     public private(set) var indexVersion = 0
     /// The sidebar's search field. Tapping a `#tag` in a note fills it with that tag.
     public var sidebarQuery = ""
+    /// A note waiting for its name in the "New note" prompt (iPad).
+    public var pendingNewNote: NewNoteRequest?
 
     @ObservationIgnored private var flushHandlers: [UUID: () -> Void] = [:]
     @ObservationIgnored private var lastLocalWrite = Date.distantPast
@@ -208,6 +215,25 @@ public final class VaultSession {
 
     /// Creates a folder (renamed "Name 2", "Name 3"… if taken) and returns its path.
     @discardableResult
+    /// Starts a new note from a button or shortcut. On iPad this asks for a name first;
+    /// on the Mac the note is created right away as "Untitled" and renamed by editing its title.
+    public func requestNewNote(kind: NoteKind, in folder: String? = nil) {
+        #if os(iOS)
+        pendingNewNote = NewNoteRequest(kind: kind, folder: folder ?? targetFolder)
+        #else
+        createNote(kind: kind, in: folder)
+        #endif
+    }
+
+    /// Finishes a `requestNewNote`; an empty name means "Untitled".
+    public func createPendingNote(named name: String) {
+        guard let request = pendingNewNote else { return }
+        pendingNewNote = nil
+        var clean = name.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "/", with: "-")
+        while clean.hasPrefix(".") { clean.removeFirst() }
+        createNote(kind: request.kind, in: request.folder, named: clean.isEmpty ? "Untitled" : clean)
+    }
+
     public func createFolder(in folder: String? = nil, named name: String = "New Folder") -> String? {
         var clean = name.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "/", with: "-")
         while clean.hasPrefix(".") { clean.removeFirst() }

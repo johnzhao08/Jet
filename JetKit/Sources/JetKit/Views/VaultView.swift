@@ -12,6 +12,7 @@ struct VaultView: View {
     @State private var showSyncSettings = false
     @State private var showQuickOpen = false
     @State private var showGraph = false
+    @State private var newNoteName = ""
     @State private var columns = NavigationSplitViewVisibility.automatic
 
     private var author: GitAuthor { GitAuthor(name: app.authorName, email: app.authorEmail) }
@@ -31,14 +32,27 @@ struct VaultView: View {
                 } description: {
                     Text("Pick a note in the sidebar or start a new one.")
                 } actions: {
-                    Button("New handwritten note") { session.createNote(kind: .ink) }
-                    Button("New text note") { session.createNote(kind: .markdown) }
+                    Button("New handwritten note") { session.requestNewNote(kind: .ink) }
+                    Button("New text note") { session.requestNewNote(kind: .markdown) }
                 }
             }
         }
         .sheet(isPresented: $showSyncSettings) { SyncSettingsView(session: session) }
         .sheet(isPresented: $showQuickOpen) { QuickOpenView(session: session) }
         .sheet(isPresented: $showGraph) { GraphView(session: session) }
+        .alert(
+            session.pendingNewNote?.kind == .ink ? "New handwritten note" : "New text note",
+            isPresented: Binding(get: { session.pendingNewNote != nil }, set: { if !$0 { session.pendingNewNote = nil } })
+        ) {
+            TextField("Untitled", text: $newNoteName)
+            Button("Create") { session.createPendingNote(named: newNoteName) }
+            Button("Cancel", role: .cancel) { session.pendingNewNote = nil }
+        } message: {
+            Text(session.pendingNewNote.map { $0.folder.isEmpty ? "Leave the name empty for “Untitled”." : "In “\($0.folder)”. Leave the name empty for “Untitled”." } ?? "")
+        }
+        .onChange(of: session.pendingNewNote) { _, request in
+            if request != nil { newNoteName = "" }
+        }
         // A tapped #tag fills the sidebar search, so make sure the sidebar is showing.
         .onChange(of: session.sidebarQuery) { _, query in
             if !query.isEmpty, columns != .all { columns = .all }
@@ -155,10 +169,10 @@ private struct SidebarView: View {
         .toolbar {
             ToolbarItemGroup {
                 Menu {
-                    Button { session.createNote(kind: .ink) } label: {
+                    Button { session.requestNewNote(kind: .ink) } label: {
                         Label("Handwritten note", systemImage: "pencil.tip")
                     }
-                    Button { session.createNote(kind: .markdown) } label: {
+                    Button { session.requestNewNote(kind: .markdown) } label: {
                         Label("Text note", systemImage: "doc.text")
                     }
                     Divider()
@@ -168,7 +182,7 @@ private struct SidebarView: View {
                 } label: {
                     Label("New", systemImage: "square.and.pencil")
                 } primaryAction: {
-                    session.createNote(kind: .platformDefault)
+                    session.requestNewNote(kind: .platformDefault)
                 }
                 .keyboardShortcut("n", modifiers: .command)
 
@@ -233,10 +247,10 @@ private struct SidebarView: View {
     @ViewBuilder
     private func menu(for node: FileNode) -> some View {
         let folder = node.isDirectory ? node.path : (node.path as NSString).deletingLastPathComponent
-        Button { session.createNote(kind: .ink, in: folder) } label: {
+        Button { session.requestNewNote(kind: .ink, in: folder) } label: {
             Label("New handwritten note here", systemImage: "pencil.tip")
         }
-        Button { session.createNote(kind: .markdown, in: folder) } label: {
+        Button { session.requestNewNote(kind: .markdown, in: folder) } label: {
             Label("New text note here", systemImage: "doc.text")
         }
         Button { askForFolder(in: folder) } label: {
