@@ -27,5 +27,19 @@
 			</array>
 		</dict>
 	</array>
+	<!-- Rows dragged around inside Jet's sidebar. -->
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.johnzhao.jet.vault-item</string>
+			<key>UTTypeDescription</key>
+			<string>Jet Vault Item</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>

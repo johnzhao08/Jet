@@ -52,6 +52,16 @@
 	<array>
 		<dict>
 			<key>UTTypeIdentifier</key>
+			<string>com.johnzhao.jet.vault-item</string>
+			<key>UTTypeDescription</key>
+			<string>Jet Vault Item</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key>
 			<string>com.johnzhao.jet.ink</string>
 			<key>UTTypeDescription</key>
 			<string>Jet Handwritten Note</string>

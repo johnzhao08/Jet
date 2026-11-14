@@ -40,9 +40,9 @@ struct VaultView: View {
             }
         }
         // Files dropped anywhere on the window: opened if they're already in a vault, else imported.
-        .onDrop(of: FileDrop.types, isTargeted: $dropTargeted) { providers in
-            FileDrop.handle(providers) { urls in app.receive(urls) }
-        }
+        .dropDestination(for: DroppedItem.self) { items, _ in
+            app.handleDrop(items, into: nil)
+        } isTargeted: { dropTargeted = $0 }
         .overlay {
             if dropTargeted {
                 RoundedRectangle(cornerRadius: 12)
@@ -140,6 +140,8 @@ private struct SidebarView: View {
     @State private var newFolderParent: String?
     /// The "Import files" picker, and the folder picked files go into.
     @State private var importing = false
+    /// The folder a drag is hovering over ("" for the top level), to highlight it.
+    @State private var dropTarget: String?
     @State private var importFolder = ""
     @State private var newFolderName = ""
 
@@ -148,16 +150,16 @@ private struct SidebarView: View {
             if session.sidebarQuery.trimmingCharacters(in: .whitespaces).isEmpty {
                 Section {
                     OutlineGroup(session.tree, children: \.children) { node in
-                        FileRow(node: node)
+                        FileRow(node: node, dropTarget: dropTarget == node.path)
                             .contextMenu { menu(for: node) }
-                            .onDrop(of: node.isDirectory ? FileDrop.types : [], isTargeted: nil) { providers in
-                                // Dropped on a folder: goes into that folder.
-                                FileDrop.handle(providers) { urls in app.receive(urls, into: node.path) }
-                            }
+                            // Drag a row onto a folder (or the Files header) to move it there.
+                            .itemProvider { VaultItem(path: node.path).itemProvider }
+                            .modifier(FolderDrop(folder: node.isDirectory ? node.path : nil, target: $dropTarget))
                     }
                 } header: {
                     HStack {
                         Text("Files")
+                            .foregroundStyle(dropTarget == "" ? Color.accentColor : .secondary)
                         Spacer()
                         Button { askForFolder(in: session.targetFolder) } label: {
                             Label("New folder", systemImage: "folder.badge.plus")
@@ -167,6 +169,9 @@ private struct SidebarView: View {
                         .buttonStyle(.borderless)
                         .help("New folder")
                     }
+                    .contentShape(Rectangle())
+                    // Dropping on the header moves things to the vault's top level.
+                    .modifier(FolderDrop(folder: "", target: $dropTarget))
                 }
                 let tags = session.allTags
                 if !tags.isEmpty {
@@ -296,6 +301,11 @@ private struct SidebarView: View {
         }
     }
 
+    /// Every folder in the vault, depth first.
+    private func folders(in nodes: [FileNode]) -> [String] {
+        nodes.filter(\.isDirectory).flatMap { [$0.path] + folders(in: $0.children ?? []) }
+    }
+
     private func importFiles(into folder: String) {
         importFolder = folder
         importing = true
@@ -322,6 +332,17 @@ private struct SidebarView: View {
             Label("Import files here…", systemImage: "square.and.arrow.down")
         }
         Divider()
+        let parent = (node.path as NSString).deletingLastPathComponent
+        let destinations = [""] + folders(in: session.tree).filter { folder in
+            folder != node.path && !folder.hasPrefix(node.path + "/")
+        }
+        Menu {
+            ForEach(destinations.filter { $0 != parent }, id: \.self) { folder in
+                Button(folder.isEmpty ? "Top level" : folder) { session.move(node.path, into: folder) }
+            }
+        } label: {
+            Label("Move to", systemImage: "folder")
+        }
         Button {
             renameText = node.title
             renaming = node
@@ -334,16 +355,41 @@ private struct SidebarView: View {
     }
 }
 
+/// Makes a folder row (or the Files header) a drop target: rows dragged onto it move in, files dropped
+/// onto it are imported into it.
+private struct FolderDrop: ViewModifier {
+    @Environment(AppModel.self) private var app
+    let folder: String?
+    @Binding var target: String?
+
+    func body(content: Content) -> some View {
+        if let folder {
+            content.dropDestination(for: DroppedItem.self) { items, _ in
+                target = nil
+                return app.handleDrop(items, into: folder)
+            } isTargeted: { hovering in
+                if hovering { target = folder } else if target == folder { target = nil }
+            }
+        } else {
+            content
+        }
+    }
+}
+
 private struct FileRow: View {
     let node: FileNode
+    var dropTarget = false
 
     private var icon: String {
         node.isDirectory ? "folder" : FileKind(path: node.path).symbol
     }
 
     var body: some View {
-        Label(node.title, systemImage: icon)
+        Label(node.title, systemImage: dropTarget ? "folder.fill" : icon)
             .lineLimit(1)
+            .foregroundStyle(dropTarget ? Color.accentColor : .primary)
+            .padding(.vertical, 1)
+            .background(dropTarget ? Color.accentColor.opacity(0.15) : .clear, in: RoundedRectangle(cornerRadius: 6))
     }
 }
 
