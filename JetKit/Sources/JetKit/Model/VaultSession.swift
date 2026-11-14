@@ -87,6 +87,10 @@ public final class VaultSession {
     @ObservationIgnored private var lastLocalWrite = Date.distantPast
     @ObservationIgnored private let defaults = UserDefaults.standard
     @ObservationIgnored private var indexTask: Task<Void, Never>?
+    #if os(macOS)
+    @ObservationIgnored private var watcher: FolderWatcher?
+    @ObservationIgnored private var externalChangeTask: Task<Void, Never>?
+    #endif
     @ObservationIgnored private var indexGeneration = 0
 
     private func key(_ name: String) -> String { "vault.\(ref.id.uuidString).\(name)" }
@@ -101,10 +105,31 @@ public final class VaultSession {
         }
         refreshTree()
         refreshStatus()
+        #if os(macOS)
+        // Notes changed by other programs (an AI assistant, a text editor, git) show up right away.
+        watcher = FolderWatcher(path: root.path) { [weak self] in
+            MainActor.assumeIsolated { self?.folderChanged() }
+        }
+        #endif
         if let last = UserDefaults.standard.string(forKey: "vault.\(ref.id.uuidString).lastNote"), exists(last) {
             selection = last
         }
     }
+
+    #if os(macOS)
+    private func folderChanged() {
+        externalChangeTask?.cancel()
+        externalChangeTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled, let self else { return }
+            self.refreshTree()
+            // Open editors reload only if the file differs from what they last saved, so Jet's own
+            // saves don't disturb typing.
+            self.contentVersion += 1
+            self.refreshStatus()
+        }
+    }
+    #endif
 
     // MARK: Files
 

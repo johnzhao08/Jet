@@ -13,6 +13,7 @@ struct VaultView: View {
     @State private var showQuickOpen = false
     @State private var showGraph = false
     @State private var newNoteName = ""
+    @State private var showConnectAI = false
     @State private var columns = NavigationSplitViewVisibility.automatic
 
     private var author: GitAuthor { GitAuthor(name: app.authorName, email: app.authorEmail) }
@@ -20,7 +21,7 @@ struct VaultView: View {
     var body: some View {
         NavigationSplitView(columnVisibility: $columns) {
             SidebarView(session: session, showSyncSettings: $showSyncSettings,
-                        showQuickOpen: $showQuickOpen, showGraph: $showGraph)
+                        showQuickOpen: $showQuickOpen, showGraph: $showGraph, showConnectAI: $showConnectAI)
                 .navigationSplitViewColumnWidth(min: 220, ideal: 270, max: 400)
         } detail: {
             if let path = session.selection, !session.isDirectory(path) {
@@ -53,6 +54,9 @@ struct VaultView: View {
         .onChange(of: session.pendingNewNote) { _, request in
             if request != nil { newNoteName = "" }
         }
+        #if os(macOS)
+        .sheet(isPresented: $showConnectAI) { ConnectAIView(session: session) }
+        #endif
         // A tapped #tag fills the sidebar search, so make sure the sidebar is showing.
         .onChange(of: session.sidebarQuery) { _, query in
             if !query.isEmpty, columns != .all { columns = .all }
@@ -98,6 +102,7 @@ private struct SidebarView: View {
     @Binding var showSyncSettings: Bool
     @Binding var showQuickOpen: Bool
     @Binding var showGraph: Bool
+    @Binding var showConnectAI: Bool
 
     @State private var hits: [SearchHit] = []
     @State private var renaming: FileNode?
@@ -202,11 +207,18 @@ private struct SidebarView: View {
                 }
                 .keyboardShortcut("g", modifiers: [.command, .shift])
                 .help("Graph of linked notes")
+
+                #if os(macOS)
+                Button { showConnectAI = true } label: {
+                    Label("Connect AI", systemImage: "sparkles")
+                }
+                .help("Let Claude or ChatGPT read and edit this vault")
+                #endif
             }
         }
         // On iPad the floating Pencil tool picker sits along the bottom edge, so sync lives at the top there.
         .safeAreaInset(edge: SyncBar.edge) {
-            SyncBar(session: session, showSyncSettings: $showSyncSettings)
+            SyncBar(session: session, showSyncSettings: $showSyncSettings, showConnectAI: $showConnectAI)
         }
         .alert("New folder", isPresented: Binding(get: { newFolderParent != nil }, set: { if !$0 { newFolderParent = nil } })) {
             TextField("Folder name", text: $newFolderName)
@@ -293,6 +305,7 @@ private struct SyncBar: View {
     @Environment(AppModel.self) private var app
     @Bindable var session: VaultSession
     @Binding var showSyncSettings: Bool
+    @Binding var showConnectAI: Bool
 
     #if os(iOS)
     static let edge = VerticalEdge.top
@@ -327,6 +340,9 @@ private struct SyncBar: View {
 
             Menu {
                 Button("Sync settings…") { showSyncSettings = true }
+                #if os(macOS)
+                Button("Connect AI…") { showConnectAI = true }
+                #endif
                 Button("Close vault") { app.closeVault() }
             } label: {
                 Image(systemName: "ellipsis.circle")

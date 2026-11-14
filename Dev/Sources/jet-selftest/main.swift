@@ -236,5 +236,42 @@ do {
     print("  FAIL  threw: \(error.localizedDescription)")
 }
 
+print("11. AI helper (jet-mcp tools)")
+do {
+    let vault = work.appendingPathComponent("mcp")
+    try fm.createDirectory(at: vault.appendingPathComponent("Ink"), withIntermediateDirectories: true)
+    try "# Plan\nSee [[Ideas]]. #project".write(to: vault.appendingPathComponent("Plan.md"), atomically: true, encoding: .utf8)
+    try inkFile([stroke(y: 60, at: Date())]).write(to: vault.appendingPathComponent("Ink/Sketch.ink"))
+    let server = MCPServer(vault: vault)
+    func call(_ name: String, _ arguments: [String: Any]) -> (error: Bool, text: String, images: Int) {
+        let reply = server.handle(["jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                                   "params": ["name": name, "arguments": arguments]])
+        let result = reply?["result"] as? [String: Any] ?? [:]
+        let content = result["content"] as? [[String: Any]] ?? []
+        return (result["isError"] as? Bool ?? true,
+                content.compactMap { $0["text"] as? String }.joined(separator: "\n"),
+                content.filter { $0["type"] as? String == "image" }.count)
+    }
+    let initialize = server.handle(["jsonrpc": "2.0", "id": 0, "method": "initialize", "params": ["protocolVersion": "2025-06-18"]])
+    expect((initialize?["result"] as? [String: Any])?["protocolVersion"] as? String == "2025-06-18", "initialize echoes a supported protocol version")
+    expect(server.handle(["jsonrpc": "2.0", "method": "notifications/initialized"]) == nil, "notifications get no reply")
+    expect(call("list_notes", [:]).text.contains("Ink/Sketch.ink  (handwritten)"), "list_notes marks handwritten notes")
+    let ink = call("read_note", ["path": "Sketch"])
+    expect(!ink.error && ink.images == 1, "read_note returns a handwritten note as an image, found by title")
+    expect(!call("create_note", ["path": "Ideas", "content": "First idea"]).error, "create_note adds .md")
+    expect(call("create_note", ["path": "Ideas.md", "content": "again"]).error, "create_note refuses to overwrite")
+    expect(!call("edit_note", ["path": "Ideas", "old_text": "First", "new_text": "Best"]).error
+           && (try? String(contentsOf: vault.appendingPathComponent("Ideas.md"), encoding: .utf8)) == "Best idea",
+           "edit_note replaces exact text")
+    expect(call("edit_note", ["path": "Sketch", "old_text": "a", "new_text": "b"]).error, "handwritten notes can't be edited")
+    expect(call("note_links", ["path": "Plan"]).text.contains("Ideas.md"), "note_links resolves links")
+    expect(call("search_notes", ["query": "#project"]).text.contains("Plan.md"), "search_notes finds tags")
+    expect(call("read_note", ["path": "../outside"]).error && call("read_note", ["path": ".git/config"]).error,
+           "paths outside the vault or in hidden folders are refused")
+} catch {
+    failures += 1
+    print("  FAIL  threw: \(error.localizedDescription)")
+}
+
 print(failures == 0 ? "\nAll checks passed." : "\n\(failures) check(s) failed.")
 exit(failures == 0 ? 0 : 1)
