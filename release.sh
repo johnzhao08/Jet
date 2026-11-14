@@ -16,10 +16,23 @@ if [ -n "$(git status --porcelain)" ]; then
     exit 1
 fi
 
-OLD=$(sed -n 's/^ *CURRENT_PROJECT_VERSION: "\([0-9]*\)"/\1/p' project.yml)
-NEW=$((OLD + 1))
-VERSION=$(sed -n 's/^ *MARKETING_VERSION: "\(.*\)"/\1/p' project.yml)
-sed -i '' "s/CURRENT_PROJECT_VERSION: \"$OLD\"/CURRENT_PROJECT_VERSION: \"$NEW\"/" project.yml
+# Bump the build number of the iPad target only (the Mac app has its own, under JetMac).
+read OLD NEW VERSION <<EOF2
+$(python3 - <<'PY'
+import re
+text = open("project.yml").read()
+start = text.index("\n  Jet:\n")
+end = text.find("\n  Jet", start + 1)
+end = len(text) if end == -1 else end
+block = text[start:end]
+old = int(re.search(r'CURRENT_PROJECT_VERSION: "(\d+)"', block).group(1))
+version = re.search(r'MARKETING_VERSION: "([^"]+)"', block).group(1)
+block = block.replace(f'CURRENT_PROJECT_VERSION: "{old}"', f'CURRENT_PROJECT_VERSION: "{old + 1}"', 1)
+open("project.yml", "w").write(text[:start] + block + text[end:])
+print(old, old + 1, version)
+PY
+)
+EOF2
 xcodegen generate --quiet
 echo "Building Jet $VERSION ($NEW)"
 
