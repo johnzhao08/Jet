@@ -24,7 +24,10 @@ public struct JetApp: App {
 final class JetAppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
+        // Screenshot runs stay in the background so they never take keyboard focus from the user.
+        if ProcessInfo.processInfo.environment["JET_SNAPSHOT"] == nil {
+            NSApp.activate(ignoringOtherApps: true)
+        }
         Self.snapshotIfRequested()
     }
 
@@ -36,13 +39,15 @@ final class JetAppDelegate: NSObject, NSApplicationDelegate {
         guard let path = environment["JET_SNAPSHOT"] else { return }
         let delay = Double(environment["JET_SNAPSHOT_DELAY"] ?? "") ?? 4
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-            if let window = NSApp.windows.first(where: { $0.isVisible && $0.contentView != nil }),
+            // A sheet is its own window; capture it instead of the window it covers.
+            let main = NSApp.windows.first(where: { $0.isVisible && $0.contentView != nil && $0.sheetParent == nil })
+            if let window = main?.attachedSheet ?? main,
                let frameView = window.contentView?.superview ?? window.contentView,
                let bitmap = frameView.bitmapImageRepForCachingDisplay(in: frameView.bounds) {
                 frameView.cacheDisplay(in: frameView.bounds, to: bitmap)
                 try? bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
             }
-            NSApp.terminate(nil)
+            exit(0)  // terminate(_:) waits on open sheets
         }
     }
 
