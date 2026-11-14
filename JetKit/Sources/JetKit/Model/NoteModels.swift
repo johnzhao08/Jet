@@ -28,11 +28,14 @@ public final class InkNoteModel {
     /// Bumped when the drawing was replaced from disk (first load, or after a sync).
     public var generation = 0
     public var showsToolPicker = true
+    /// The canvas's current tool mode, for showing in the toolbar. The canvas owns it.
     public var mode: InkMode = .draw
 
     @ObservationIgnored public private(set) var drawing = PKDrawing()
     @ObservationIgnored public var undo: () -> Void = {}
     @ObservationIgnored public var redo: () -> Void = {}
+    /// Turns lasso or insert space on (or back off to the previous tool). Set by the canvas.
+    @ObservationIgnored public var toggleTool: (InkMode) -> Void = { _ in }
     @ObservationIgnored public var onWrite: () -> Void = {}
 
     @ObservationIgnored private var lastSaved: Data?

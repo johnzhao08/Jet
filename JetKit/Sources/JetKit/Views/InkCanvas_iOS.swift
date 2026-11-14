@@ -18,14 +18,13 @@ struct InkCanvasRepresentable: UIViewControllerRepresentable {
     let generation: Int
     let paper: PaperStyle
     let showsToolPicker: Bool
-    let mode: InkMode
 
     func makeUIViewController(context: Context) -> InkCanvasController {
         InkCanvasController(model: model)
     }
 
     func updateUIViewController(_ controller: InkCanvasController, context: Context) {
-        controller.apply(generation: generation, paper: paper, showsToolPicker: showsToolPicker, mode: mode)
+        controller.apply(generation: generation, paper: paper, showsToolPicker: showsToolPicker)
     }
 }
 
@@ -34,13 +33,33 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
     private let model: InkNoteModel
     private let canvas = PKCanvasView()
     private let paperView = PaperLinesView()
-    private let toolPicker = PKToolPicker()
     private let spaceGuide = InsertSpaceGuideView()
     private lazy var insertSpacePan = UIPanGestureRecognizer(target: self, action: #selector(handleInsertSpace(_:)))
+    private lazy var lassoWatcher = TouchWatcher { [weak self] path, touchType in self?.lassoGestureEnded(path, touchType) }
+
+    // The tool picker holds Apple's tools plus the lasso and Jet's own Insert Space tool, so it shows
+    // which one is active, and the Pencil's "switch to previous tool" moves between all of them.
+    private let lassoItem = PKToolPickerLassoItem()
+    private let spaceItem = InkCanvasController.makeInsertSpaceItem()
+    private lazy var toolPicker = PKToolPicker(toolItems: [
+        PKToolPickerInkingItem(type: .pen),
+        PKToolPickerInkingItem(type: .monoline),
+        PKToolPickerInkingItem(type: .marker),
+        PKToolPickerInkingItem(type: .pencil),
+        PKToolPickerEraserItem(type: .vector),
+        lassoItem,
+        spaceItem,
+        PKToolPickerRulerItem(),
+    ])
 
     private var mode = InkMode.draw
-    /// The tool to restore when leaving lasso or insert-space mode.
-    private var drawingTool: PKTool = PKInkingTool(.pen, color: .label, width: 3)
+    /// The selected tool item, the one before it (for the Pencil's "switch to previous tool" while the
+    /// picker is hidden) and the tool to go back to once a lasso or insert-space action is done.
+    private var currentItemID = ""
+    private var previousItemID = ""
+    private var returnItemID = ""
+    /// The lasso's outline (page points) while it has a selection, moved along when the selection is dragged.
+    private var lassoSelection: [CGPoint]?
     /// The drawing as it was when an insert-space drag began, the line it started at (page points),
     /// and how far the strokes below may move up before they would overlap the strokes above.
     private var spaceDrag: (original: PKDrawing, lineY: CGFloat, maxUp: CGFloat)?
@@ -54,8 +73,6 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
     private var laidOutWidth: CGFloat = 0
     /// Page height in page points (the page is `InkDocument.pageWidth` wide). Only ever grows while open.
     private var pageHeight: CGFloat = 0
-    /// The tool to return to when double-tap toggles away from the eraser.
-    private var alternateTool: PKTool = PKEraserTool(.vector)
 
     init(model: InkNoteModel) {
         self.model = model
@@ -90,17 +107,38 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
         toolPicker.stateAutosaveName = "jet.ink.toolpicker"
         toolPicker.addObserver(canvas)
         toolPicker.addObserver(self)
+        // A fresh page always starts with a writing tool, never the lasso or insert space.
+        if isSpecial(toolPicker.selectedToolItemIdentifier) {
+            toolPicker.selectedToolItemIdentifier = toolPicker.toolItems.first?.identifier ?? ""
+        }
+        currentItemID = toolPicker.selectedToolItemIdentifier
+        previousItemID = toolPicker.toolItems.first { $0 is PKToolPickerEraserItem }?.identifier ?? currentItemID
+        returnItemID = currentItemID
 
         spaceGuide.frame = view.bounds
         spaceGuide.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         spaceGuide.isUserInteractionEnabled = false
         view.addSubview(spaceGuide)
 
-        // Insert space: one finger or the Pencil drags the line; two fingers still scroll.
+        // Insert space: the Pencil drags the line, so fingers keep scrolling. (The simulator has no
+        // Pencil, so there a finger drags it and scrolling takes two.)
         insertSpacePan.maximumNumberOfTouches = 1
+        #if targetEnvironment(simulator)
+        insertSpacePan.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.pencil.rawValue),
+                                            NSNumber(value: UITouch.TouchType.direct.rawValue)]
+        #else
+        insertSpacePan.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.pencil.rawValue)]
+        #endif
         insertSpacePan.isEnabled = false
         insertSpacePan.delegate = self
         canvas.addGestureRecognizer(insertSpacePan)
+        // Belt and braces: ink never starts while an insert-space drag could still begin.
+        canvas.drawingGestureRecognizer.require(toFail: insertSpacePan)
+
+        // Watches lasso gestures (without taking part in them) to know when the selection is finished.
+        lassoWatcher.delegate = self
+        lassoWatcher.isEnabled = false
+        canvas.addGestureRecognizer(lassoWatcher)
 
         // Two-finger double tap undoes, three-finger double tap redoes.
         let undoTap = UITapGestureRecognizer(target: self, action: #selector(handleUndoTap))
@@ -118,6 +156,7 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
 
         view.addInteraction(UIPencilInteraction(delegate: self))
 
+        model.toggleTool = { [weak self] tool in self?.toggle(tool) }
         model.undo = { [weak self] in self?.canvas.undoManager?.undo() }
         model.redo = { [weak self] in self?.canvas.undoManager?.redo() }
     }
@@ -154,7 +193,7 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
 
     // MARK: State from SwiftUI
 
-    func apply(generation: Int, paper: PaperStyle, showsToolPicker: Bool, mode: InkMode) {
+    func apply(generation: Int, paper: PaperStyle, showsToolPicker: Bool) {
         loadViewIfNeeded()
         if generation != appliedGeneration {
             appliedGeneration = generation
@@ -170,48 +209,122 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
             pickerWanted = showsToolPicker
             if view.window != nil { showToolPicker(showsToolPicker) }
         }
-        if mode != self.mode { setMode(mode) }
     }
 
-    // MARK: Lasso and insert space
+    // MARK: Tools, lasso and insert space
 
-    private func setMode(_ newMode: InkMode) {
-        if mode == .draw { drawingTool = canvas.tool }
-        mode = newMode
-        switch newMode {
-        case .draw:
-            canvas.tool = drawingTool
-        case .lasso:
-            canvas.tool = PKLassoTool()
-        case .insertSpace:
-            canvas.tool = drawingTool
+    private static func makeInsertSpaceItem() -> PKToolPickerCustomItem {
+        var configuration = PKToolPickerCustomItem.Configuration(identifier: "jet.insert-space", name: "Insert Space")
+        configuration.imageProvider = { _ in InsertSpaceToolImage.image }
+        configuration.allowsColorSelection = false
+        configuration.toolAttributeControls = []
+        return PKToolPickerCustomItem(configuration: configuration)
+    }
+
+    private func isSpecial(_ identifier: String) -> Bool {
+        identifier == lassoItem.identifier || identifier == spaceItem.identifier
+    }
+
+    /// The toolbar's lasso and insert-space buttons: turn that tool on, or off again if it's on.
+    private func toggle(_ tool: InkMode) {
+        switch tool {
+        case _ where tool == mode, .draw: returnToPreviousTool()
+        case .lasso: selectItem(lassoItem.identifier)
+        case .insertSpace: selectItem(spaceItem.identifier)
         }
-        let inserting = newMode == .insertSpace
+    }
+
+    private func selectItem(_ identifier: String) {
+        guard !identifier.isEmpty, identifier != toolPicker.selectedToolItemIdentifier else { return }
+        toolPicker.selectedToolItemIdentifier = identifier
+        toolPickerSelectedToolItemDidChange(toolPicker)
+    }
+
+    /// Goes back to the tool used before the lasso or insert space.
+    private func returnToPreviousTool() {
+        lassoSelection = nil
+        selectItem(returnItemID)
+    }
+
+    /// The picker's selection is the single source of truth for which tool is active.
+    func toolPickerSelectedToolItemDidChange(_ toolPicker: PKToolPicker) {
+        let identifier = toolPicker.selectedToolItemIdentifier
+        guard identifier != currentItemID else {
+            applyModeState()
+            return
+        }
+        if !isSpecial(identifier), !identifier.isEmpty {
+            returnItemID = identifier
+        } else if !isSpecial(currentItemID) {
+            returnItemID = currentItemID
+        }
+        previousItemID = currentItemID
+        currentItemID = identifier
+
+        let newMode: InkMode = identifier == lassoItem.identifier ? .lasso
+            : identifier == spaceItem.identifier ? .insertSpace : .draw
+        if newMode != mode {
+            mode = newMode
+            lassoSelection = nil
+            spaceGuide.hint = switch newMode {
+            case .lasso: "Lasso: circle handwriting to select it. Tap outside the selection when you're done."
+            case .insertSpace: "Insert space: drag down with Apple Pencil to add space, up to remove it."
+            case .draw: nil
+            }
+        }
+        applyModeState()
+        // PencilKit updates the canvas from the picker too, sometimes after us; settle it again afterwards.
+        DispatchQueue.main.async { self.applyModeState() }
+        if model.mode != newMode { model.mode = newMode }
+    }
+
+    /// Which gestures are live for the current mode.
+    private func applyModeState() {
+        let inserting = mode == .insertSpace
         insertSpacePan.isEnabled = inserting
         canvas.drawingGestureRecognizer.isEnabled = !inserting
-        // While inserting space, a single finger moves the line, so scrolling takes two.
+        lassoWatcher.isEnabled = mode == .lasso
+        #if targetEnvironment(simulator)
         canvas.panGestureRecognizer.minimumNumberOfTouches = inserting ? 2 : 1
-        spaceGuide.showsHint = inserting
+        #endif
     }
 
-    /// Picking a tool in the tool picker goes back to writing.
-    func toolPickerSelectedToolItemDidChange(_ toolPicker: PKToolPicker) {
-        leaveSpecialMode()
+    /// A lasso gesture on the page finished (a drag or a tap, in page points).
+    private func lassoGestureEnded(_ path: [CGPoint], _ touchType: UITouch.TouchType) {
+        guard mode == .lasso, let start = path.first, let end = path.last else { return }
+        // Fingers only lasso when they draw; otherwise they were scrolling.
+        let fingersDraw = canvas.drawingPolicy == .anyInput
+            || (canvas.drawingPolicy == .default && !UIPencilInteraction.prefersPencilOnlyDrawing)
+        guard touchType == .pencil || fingersDraw else { return }
+        let length = zip(path, path.dropFirst()).reduce(CGFloat(0)) { $0 + hypot($1.1.x - $1.0.x, $1.1.y - $1.0.y) }
+        let isTap = length * max(canvas.zoomScale, 0.01) < 12
+
+        if let selection = lassoSelection, Self.polygon(selection, contains: start) {
+            // Dragging the selection moves it; a tap on it opens the edit menu.
+            if !isTap {
+                lassoSelection = selection.map { CGPoint(x: $0.x + end.x - start.x, y: $0.y + end.y - start.y) }
+            }
+        } else if isTap {
+            // A tap away from the selection drops it: the lasso is done.
+            returnToPreviousTool()
+        } else {
+            lassoSelection = path
+        }
     }
 
-    func toolPickerSelectedToolDidChange(_ toolPicker: PKToolPicker) {
-        leaveSpecialMode()
-    }
-
-    private func leaveSpecialMode() {
-        guard mode != .draw else { return }
-        mode = .draw
-        insertSpacePan.isEnabled = false
-        canvas.drawingGestureRecognizer.isEnabled = true
-        canvas.panGestureRecognizer.minimumNumberOfTouches = 1
-        spaceGuide.showsHint = false
-        // The canvas already follows the picker's new tool.
-        DispatchQueue.main.async { self.model.mode = .draw }
+    static func polygon(_ polygon: [CGPoint], contains point: CGPoint) -> Bool {
+        guard polygon.count > 2 else { return false }
+        var inside = false
+        var j = polygon.count - 1
+        for i in polygon.indices {
+            let a = polygon[i], b = polygon[j]
+            if (a.y > point.y) != (b.y > point.y),
+               point.x < (b.x - a.x) * (point.y - a.y) / (b.y - a.y) + a.x {
+                inside.toggle()
+            }
+            j = i
+        }
+        return inside
     }
 
     @objc private func handleInsertSpace(_ pan: UIPanGestureRecognizer) {
@@ -246,6 +359,8 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
             canvas.drawing = result
             registerUndo(from: drag.original, to: result, name: delta > 0 ? "Insert Space" : "Remove Space")
             updateContentSize()
+            // One drag per use, then back to writing.
+            returnToPreviousTool()
         default:
             break
         }
@@ -283,6 +398,7 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
     }
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        if gestureRecognizer === lassoWatcher { lassoWatcher.zoom = canvas.zoomScale }
         if gestureRecognizer === insertSpacePan, spaceDrag == nil {
             spaceTouchStart = touch.location(in: canvas)
         }
@@ -322,6 +438,10 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
     // MARK: PKCanvasViewDelegate / UIScrollViewDelegate
 
     func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
+        // Deleting or cutting the lassoed handwriting from its menu ends the lasso too.
+        if mode == .lasso, lassoSelection != nil, canvasView.drawing.strokes.count < model.drawing.strokes.count {
+            DispatchQueue.main.async { self.returnToPreviousTool() }
+        }
         model.drawingChanged(canvasView.drawing)
         updateContentSize()
     }
@@ -352,18 +472,15 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
         perform(UIPencilInteraction.preferredSqueezeAction)
     }
 
-    /// Follows what the user chose in Settings > Apple Pencil.
+    /// Follows what the user chose in Settings > Apple Pencil (used while the tool picker is hidden;
+    /// the visible picker handles the Pencil itself, lasso and Insert Space included).
     private func perform(_ action: UIPencilPreferredAction) {
         switch action {
         case .switchEraser:
-            if canvas.tool is PKEraserTool {
-                swapTools()
-            } else {
-                alternateTool = canvas.tool
-                canvas.tool = PKEraserTool(.vector)
-            }
+            let eraser = toolPicker.toolItems.first { $0 is PKToolPickerEraserItem }?.identifier ?? ""
+            selectItem(currentItemID == eraser ? previousItemID : eraser)
         case .switchPrevious:
-            swapTools()
+            selectItem(previousItemID)
         case .showColorPalette, .showInkAttributes, .showContextualPalette:
             model.showsToolPicker = true
         case .ignore, .runSystemShortcut:
@@ -372,37 +489,108 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
             break
         }
     }
+}
 
-    private func swapTools() {
-        let current = canvas.tool
-        canvas.tool = alternateTool
-        alternateTool = current
+/// Follows single-touch gestures on the canvas without taking part in them: reports each finished
+/// touch's path (in page points) so the controller knows what the lasso did.
+final class TouchWatcher: UIGestureRecognizer {
+    var zoom: CGFloat = 1
+    private let onEnd: ([CGPoint], UITouch.TouchType) -> Void
+    private var path: [CGPoint] = []
+    private var touchType = UITouch.TouchType.direct
+    private var tracking = false
+
+    init(onEnd: @escaping ([CGPoint], UITouch.TouchType) -> Void) {
+        self.onEnd = onEnd
+        super.init(target: nil, action: nil)
+        cancelsTouchesInView = false
+        delaysTouchesBegan = false
+        delaysTouchesEnded = false
     }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        let all = event.allTouches?.count ?? touches.count
+        guard all == 1, let touch = touches.first else {
+            tracking = false  // two fingers: scrolling or zooming
+            return
+        }
+        tracking = true
+        touchType = touch.type
+        path = [point(touch)]
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
+        guard tracking, let touch = touches.first else { return }
+        path.append(point(touch))
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
+        if tracking, let touch = touches.first {
+            path.append(point(touch))
+            onEnd(path, touchType)
+        }
+        tracking = false
+        state = .failed
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
+        tracking = false
+        state = .failed
+    }
+
+    private func point(_ touch: UITouch) -> CGPoint {
+        let location = touch.location(in: view)
+        return CGPoint(x: location.x / max(zoom, 0.01), y: location.y / max(zoom, 0.01))
+    }
+}
+
+/// The Insert Space tool as drawn in the tool picker: a slim tool with an up-and-down arrow.
+enum InsertSpaceToolImage {
+    static let image: UIImage = {
+        let size = CGSize(width: 40, height: 116)
+        return UIGraphicsImageRenderer(size: size).image { _ in
+            let body = UIBezierPath(roundedRect: CGRect(x: 6, y: 10, width: 28, height: 120), cornerRadius: 9)
+            UIColor.white.setFill()
+            body.fill()
+            UIColor.systemGray3.setStroke()
+            body.lineWidth = 1
+            body.stroke()
+            let symbol = UIImage(systemName: "arrow.up.and.down",
+                                 withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .bold))?
+                .withTintColor(.systemBlue, renderingMode: .alwaysOriginal)
+            symbol?.draw(in: CGRect(x: 10, y: 22, width: 20, height: 26))
+            UIColor.systemBlue.setFill()
+            UIBezierPath(rect: CGRect(x: 6, y: 58, width: 28, height: 4)).fill()
+        }
+    }()
 }
 
 /// The insert-space line and its hint, drawn over the canvas.
 final class InsertSpaceGuideView: UIView {
     private let line = UIView()
     private let band = UIView()
-    private let hint = UILabel()
+    private let hintLabel = UILabel()
 
-    var showsHint = false {
-        didSet { hint.isHidden = !showsHint }
+    var hint: String? {
+        didSet {
+            hintLabel.text = hint
+            hintLabel.isHidden = hint == nil
+            setNeedsLayout()
+        }
     }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         band.backgroundColor = UIColor.tintColor.withAlphaComponent(0.08)
         line.backgroundColor = .tintColor
-        hint.text = "Drag down to insert space, up to remove it"
-        hint.font = .preferredFont(forTextStyle: .footnote)
-        hint.textColor = .secondaryLabel
-        hint.textAlignment = .center
-        hint.backgroundColor = UIColor.secondarySystemBackground.withAlphaComponent(0.92)
-        hint.layer.cornerRadius = 10
-        hint.layer.masksToBounds = true
-        hint.isHidden = true
-        [band, line, hint].forEach(addSubview)
+        hintLabel.font = .preferredFont(forTextStyle: .footnote)
+        hintLabel.textColor = .secondaryLabel
+        hintLabel.textAlignment = .center
+        hintLabel.backgroundColor = UIColor.secondarySystemBackground.withAlphaComponent(0.92)
+        hintLabel.layer.cornerRadius = 10
+        hintLabel.layer.masksToBounds = true
+        hintLabel.isHidden = true
+        [band, line, hintLabel].forEach(addSubview)
         hide()
     }
 
@@ -411,9 +599,9 @@ final class InsertSpaceGuideView: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        let size = hint.sizeThatFits(CGSize(width: bounds.width - 40, height: 40))
+        let size = hintLabel.sizeThatFits(CGSize(width: bounds.width - 40, height: 40))
         let top = safeAreaInsets.top + 12
-        hint.frame = CGRect(x: (bounds.width - size.width - 24) / 2, y: top, width: size.width + 24, height: size.height + 12)
+        hintLabel.frame = CGRect(x: (bounds.width - size.width - 24) / 2, y: top, width: size.width + 24, height: size.height + 12)
     }
 
     /// `lineY` is where the drag started, `delta` how far it has moved, both in view points.
