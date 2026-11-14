@@ -9,6 +9,8 @@ struct InkNoteView: View {
 
     @State private var model: InkNoteModel
     @State private var editorID: UUID?
+    @State private var showTools = false
+    @AppStorage(InkPickerTool.storageKey) private var storedTools = InkPickerTool.encode(InkPickerTool.defaults)
 
     init(session: VaultSession, path: String) {
         self.session = session
@@ -49,10 +51,16 @@ struct InkNoteView: View {
                                 Text(style.label).tag(style)
                             }
                         }
+                        #if os(iOS)
+                        Divider()
+                        Button { showTools = true } label: {
+                            Label("Pens & Tools…", systemImage: "pencil.and.list.clipboard")
+                        }
+                        #endif
                     } label: {
-                        Label("Paper", systemImage: "squareshape.split.3x3")
+                        Label("Page", systemImage: "ellipsis.circle")
                     }
-                    .help("Paper style")
+                    .help("Paper style and pens")
                 }
             }
             .onAppear {
@@ -64,6 +72,9 @@ struct InkNoteView: View {
                 session.unregisterEditor(editorID)
             }
             .onChange(of: session.contentVersion) { model.reloadIfChangedOnDisk() }
+            #if os(iOS)
+            .sheet(isPresented: $showTools) { InkToolsView() }
+            #endif
     }
 
     @ViewBuilder
@@ -73,7 +84,8 @@ struct InkNoteView: View {
             model: model,
             generation: model.generation,
             paper: model.paper,
-            showsToolPicker: model.showsToolPicker
+            showsToolPicker: model.showsToolPicker,
+            tools: InkPickerTool.decode(storedTools)
         )
         .ignoresSafeArea(.container, edges: .bottom)
         #else
