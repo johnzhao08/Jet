@@ -16,6 +16,12 @@ Plain-file notes with git sync, for iPad and Mac.
   shared as an annotated copy. Text and code files (`.txt`, `.csv`, `.json`, …) open in a plain editor;
   everything else (pictures, Office/iWork documents, audio, video…) in Quick Look. Bring files in with
   New → Import Files…, or "Open in Jet" / share to Jet from other iPad apps.
+- **Files from elsewhere**: drop files on the window (or on a sidebar folder) on Mac or iPad, or on the
+  Mac open them with Jet from Finder (Open With, the Dock icon). A file already in a vault opens in
+  place; anything else is copied in. Files over 100 MB are refused (GitHub won't take them, so sync would
+  stop) and 50–100 MB files ask first.
+- **Organizing**: drag files and folders onto a folder in the sidebar (or onto "Files" for the top
+  level), or use Move to in a file's menu. PDF annotations move with their PDF.
 - **Linking** (Obsidian-compatible): `[[wikilinks]]` (with `|alias` and `#heading`), backlinks and
   unlinked mentions under each note (one tap turns a mention into a link), `#tags` and `#nested/tags`
   (sidebar list, tap to filter, search `#tag`), YAML frontmatter properties (`tags`, `aliases` resolve links),

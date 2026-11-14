@@ -298,6 +298,40 @@ public final class VaultSession {
         if wasSelected { selection = newPath }
     }
 
+    /// Moves a file or folder into `folder` ("" is the vault's top level), renamed "Name 2" if the
+    /// name is taken there. A PDF's annotations go with it; an open note stays open. Returns the new path.
+    @discardableResult
+    public func move(_ path: String, into folder: String) -> String? {
+        let parent = (path as NSString).deletingLastPathComponent
+        guard exists(path), parent != folder, folder != path, !folder.hasPrefix(path + "/"),
+              folder.isEmpty || isDirectory(folder) else { return nil }
+        flushEditors()
+        let name = (path as NSString).lastPathComponent
+        let ext = isDirectory(path) ? "" : (name as NSString).pathExtension
+        let base = ext.isEmpty ? name : (name as NSString).deletingPathExtension
+        let newPath = uniquePath(folder: folder, base: base, ext: ext)
+        let selected = selection
+        if let selected, selected == path || selected.hasPrefix(path + "/") { selection = nil }
+        do {
+            try FileManager.default.moveItem(at: url(for: path), to: url(for: newPath))
+        } catch {
+            selection = selected
+            return nil
+        }
+        let notes = Self.annotationsPath(for: path)
+        if exists(notes) {
+            try? FileManager.default.moveItem(at: url(for: notes), to: url(for: Self.annotationsPath(for: newPath)))
+        }
+        didWriteFile()
+        refreshTree()
+        if let selected {
+            if selected == path { selection = newPath }
+            else if selected.hasPrefix(path + "/") { selection = newPath + selected.dropFirst(path.count) }
+            else { selection = selected }
+        }
+        return newPath
+    }
+
     public func delete(_ path: String) {
         if let selected = selection, selected == path || selected.hasPrefix(path + "/") { selection = nil }
         try? FileManager.default.removeItem(at: url(for: path))

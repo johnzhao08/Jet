@@ -447,5 +447,66 @@ do {
     print("  FAIL  threw: \(error.localizedDescription)")
 }
 
+print("15. Moving files between folders")
+do {
+    let vault = work.appendingPathComponent("moves")
+    for folder in ["Daily", "Course/Week 1"] {
+        try fm.createDirectory(at: vault.appendingPathComponent(folder), withIntermediateDirectories: true)
+    }
+    try "# Welcome".write(to: vault.appendingPathComponent("Welcome.md"), atomically: true, encoding: .utf8)
+    try "# Other".write(to: vault.appendingPathComponent("Daily/Welcome.md"), atomically: true, encoding: .utf8)
+    try Data("%PDF".utf8).write(to: vault.appendingPathComponent("Slides.pdf"))
+    try Data("{}".utf8).write(to: vault.appendingPathComponent(".Slides.pdf.ink"))
+    try "notes".write(to: vault.appendingPathComponent("Course/Week 1/Notes.md"), atomically: true, encoding: .utf8)
+    MainActor.assumeIsolated {
+        let session = VaultSession(ref: VaultRef(name: "moves", location: vault.path))
+        session.selection = "Welcome.md"
+        let moved = session.move("Welcome.md", into: "Daily")
+        expect(moved == "Daily/Welcome 2.md" && session.selection == moved && !session.exists("Welcome.md"),
+               "moving a note into a folder keeps it open and doesn't overwrite a same-named note")
+        expect(session.move("Slides.pdf", into: "Course") == "Course/Slides.pdf" && session.exists("Course/.Slides.pdf.ink"),
+               "a moved PDF takes its annotations along")
+        session.selection = "Course/Week 1/Notes.md"
+        expect(session.move("Course/Week 1", into: "") == "Week 1" && session.selection == "Week 1/Notes.md",
+               "moving a folder moves what's inside, and the open note follows")
+        expect(session.move("Course", into: "Course") == nil && session.exists("Course"), "a folder can't move into itself")
+        expect(session.move("Daily/Welcome 2.md", into: "Daily") == nil, "dropping on its own folder does nothing")
+    }
+} catch {
+    failures += 1
+    print("  FAIL  threw: \(error.localizedDescription)")
+}
+
+print("16. Drops decode the way SwiftUI decodes them")
+do {
+    let file = work.appendingPathComponent("Dropped note.md")
+    try "# Dropped".write(to: file, atomically: true, encoding: .utf8)
+    func decode(_ provider: NSItemProvider) async -> DroppedItem? {
+        try? await withCheckedThrowingContinuation { continuation in
+            _ = provider.loadTransferable(type: DroppedItem.self) { continuation.resume(with: $0) }
+        }
+    }
+    let semaphore = DispatchSemaphore(value: 0)
+    var finderResult: DroppedItem?
+    var rowResult: DroppedItem?
+    Task.detached {
+        // Finder's drag: the file's URL (and its contents).
+        finderResult = await decode(NSItemProvider(contentsOf: file)!)
+        rowResult = await decode(VaultItem(path: "Welcome.md").itemProvider)
+        semaphore.signal()
+    }
+    semaphore.wait()
+    if case .file(let url)? = finderResult {
+        expect(url.standardizedFileURL.path == file.standardizedFileURL.path, "a Finder file drop gives the original file")
+    } else {
+        expect(false, "a Finder file drop gives the original file (got \(String(describing: finderResult)))")
+    }
+    if case .vaultItem(let path)? = rowResult {
+        expect(path == "Welcome.md", "a dragged sidebar row decodes as a move")
+    } else {
+        expect(false, "a dragged sidebar row decodes as a move (got \(String(describing: rowResult)))")
+    }
+}
+
 print(failures == 0 ? "\nAll checks passed." : "\n\(failures) check(s) failed.")
 exit(failures == 0 ? 0 : 1)

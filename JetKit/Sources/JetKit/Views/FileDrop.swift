@@ -1,64 +1,77 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Files dragged onto Jet: from Finder (as file URLs) or from the Files app and other iPad apps (as
-/// file representations, copied to a temporary folder first because the system deletes its copy).
-enum FileDrop {
-    static let types: [UTType] = [.fileURL, .item]
+extension UTType {
+    /// A file or folder being dragged around inside Jet's own sidebar.
+    static let jetVaultItem = UTType(exportedAs: "com.johnzhao.jet.vault-item")
+}
 
-    /// Reads the dropped files and hands their URLs to `receive` on the main actor. Returns false when
-    /// nothing in the drop is a file.
-    static func handle(_ providers: [NSItemProvider], receive: @escaping @MainActor ([URL]) -> Void) -> Bool {
-        let files = providers.filter { $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) || isFileLike($0) }
-        guard !files.isEmpty else { return false }
-        Task {
-            var urls: [URL] = []
-            for provider in files {
-                if let url = await load(provider) { urls.append(url) }
-            }
-            if !urls.isEmpty { await receive(urls) }
-        }
-        return true
+/// A sidebar row being dragged: its path in the open vault.
+public struct VaultItem: Codable, Transferable {
+    public let path: String
+    public init(path: String) { self.path = path }
+
+    public static var transferRepresentation: some TransferRepresentation {
+        CodableRepresentation(contentType: .jetVaultItem)
     }
+}
 
-    /// Plain dragged text or a link isn't a file to import.
-    private static func isFileLike(_ provider: NSItemProvider) -> Bool {
-        provider.registeredTypeIdentifiers.contains { identifier in
-            guard let type = UTType(identifier) else { return false }
-            return !type.conforms(to: .text) && !type.conforms(to: .url) && (type.conforms(to: .data) || type.conforms(to: .content))
+extension VaultItem {
+    /// For List rows, which drag through an item provider (on iPad, `.draggable` rows don't start a drag).
+    public var itemProvider: NSItemProvider {
+        let provider = NSItemProvider()
+        let data = (try? JSONEncoder().encode(self)) ?? Data()
+        provider.registerDataRepresentation(forTypeIdentifier: UTType.jetVaultItem.identifier, visibility: .ownProcess) { done in
+            done(data, nil)
+            return nil
+        }
+        provider.suggestedName = (path as NSString).lastPathComponent
+        return provider
+    }
+}
+
+/// Something dropped on Jet: a row from its own sidebar (to move), or a file from Finder, the Files
+/// app or another app (to open or import).
+public enum DroppedItem: Transferable {
+    case vaultItem(String)
+    case file(URL)
+
+    public static var transferRepresentation: some TransferRepresentation {
+        ProxyRepresentation(importing: { (item: VaultItem) in DroppedItem.vaultItem(item.path) })
+        #if os(macOS)
+        // Finder drags carry the file's URL: use the original file where it is.
+        ProxyRepresentation(importing: { (url: URL) in DroppedItem.file(url) })
+        #endif
+        // Finder hands over the original file (so files already in a vault open in place); the Files
+        // app and other apps hand over a copy that's only valid in here, so it's copied out first.
+        FileRepresentation(importedContentType: .item, shouldAttemptToOpenInPlace: true) { received in
+            if received.isOriginalFile { return .file(received.file) }
+            let folder = FileManager.default.temporaryDirectory
+                .appendingPathComponent("JetDrops").appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let copy = folder.appendingPathComponent(received.file.lastPathComponent)
+            try FileManager.default.copyItem(at: received.file, to: copy)
+            return .file(copy)
         }
     }
+}
 
-    private static func load(_ provider: NSItemProvider) async -> URL? {
-        if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
-            let url: URL? = await withCheckedContinuation { continuation in
-                _ = provider.loadObject(ofClass: URL.self) { url, _ in continuation.resume(returning: url) }
-            }
-            if let url, url.isFileURL { return url }
-        }
-        guard let type = provider.registeredTypeIdentifiers.first(where: { UTType($0).map { !$0.conforms(to: .text) } ?? false })
-                ?? provider.registeredTypeIdentifiers.first else { return nil }
-        return await withCheckedContinuation { continuation in
-            _ = provider.loadFileRepresentation(forTypeIdentifier: type) { url, _ in
-                guard let url else { return continuation.resume(returning: nil) }
-                // Only valid inside this callback: keep a copy under the name the drag suggested.
-                let folder = FileManager.default.temporaryDirectory
-                    .appendingPathComponent("JetDrops").appendingPathComponent(UUID().uuidString)
-                var name = url.lastPathComponent
-                if let suggested = provider.suggestedName, !suggested.isEmpty {
-                    name = (suggested as NSString).pathExtension.isEmpty && !url.pathExtension.isEmpty
-                        ? suggested + "." + url.pathExtension : suggested
-                }
-                let copy = folder.appendingPathComponent(name)
-                do {
-                    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-                    try FileManager.default.copyItem(at: url, to: copy)
-                    continuation.resume(returning: copy)
-                } catch {
-                    continuation.resume(returning: nil)
-                }
+extension AppModel {
+    /// Handles a drop: sidebar rows move into `folder` (when dropped on a folder), files are opened or
+    /// imported (into `folder` if given).
+    func handleDrop(_ items: [DroppedItem], into folder: String?) -> Bool {
+        var files: [URL] = []
+        var moved = false
+        for item in items {
+            switch item {
+            case .vaultItem(let path):
+                if let folder, let session { moved = session.move(path, into: folder) != nil || moved }
+            case .file(let url):
+                files.append(url)
             }
         }
+        if !files.isEmpty { receive(files, into: folder) }
+        return moved || !files.isEmpty
     }
 }
 
