@@ -30,48 +30,100 @@ extension VaultItem {
     }
 }
 
-/// Something dropped on Jet: a row from its own sidebar (to move), or a file from Finder, the Files
-/// app or another app (to open or import).
-public enum DroppedItem: Transferable {
-    case vaultItem(String)
-    case file(URL)
+/// A file dropped on Jet from Finder, the Files app or another app.
+public struct DroppedFile: Transferable {
+    public let url: URL
 
     public static var transferRepresentation: some TransferRepresentation {
-        ProxyRepresentation(importing: { (item: VaultItem) in DroppedItem.vaultItem(item.path) })
         #if os(macOS)
         // Finder drags carry the file's URL: use the original file where it is.
-        ProxyRepresentation(importing: { (url: URL) in DroppedItem.file(url) })
+        ProxyRepresentation(importing: { (url: URL) in DroppedFile(url: url) })
         #endif
-        // Finder hands over the original file (so files already in a vault open in place); the Files
-        // app and other apps hand over a copy that's only valid in here, so it's copied out first.
+        // The Files app and other apps hand over a copy that's only valid in here, so copy it out.
         FileRepresentation(importedContentType: .item, shouldAttemptToOpenInPlace: true) { received in
-            if received.isOriginalFile { return .file(received.file) }
+            if received.isOriginalFile { return DroppedFile(url: received.file) }
             let folder = FileManager.default.temporaryDirectory
                 .appendingPathComponent("JetDrops").appendingPathComponent(UUID().uuidString)
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             let copy = folder.appendingPathComponent(received.file.lastPathComponent)
             try FileManager.default.copyItem(at: received.file, to: copy)
-            return .file(copy)
+            return DroppedFile(url: copy)
         }
     }
 }
 
-extension AppModel {
-    /// Handles a drop: sidebar rows move into `folder` (when dropped on a folder), files are opened or
-    /// imported (into `folder` if given).
-    func handleDrop(_ items: [DroppedItem], into folder: String?) -> Bool {
-        var files: [URL] = []
-        var moved = false
-        for item in items {
-            switch item {
-            case .vaultItem(let path):
-                if let folder, let session { moved = session.move(path, into: folder) != nil || moved }
-            case .file(let url):
-                files.append(url)
-            }
+/// What a drop on Jet is: rows dragged within its own sidebar (to move), or files from elsewhere.
+public enum FileDrop {
+    static let acceptedTypes: [UTType] = [.jetVaultItem, .fileURL, .item]
+
+    public enum Contents: Equatable {
+        case vaultItems
+        case files
+        case nothing
+    }
+
+    /// Jet's own rows are recognised by their type before anything else, so a row being moved is
+    /// never mistaken for a file to import. Dragged text and links aren't files.
+    public static func classify(_ providers: [NSItemProvider]) -> Contents {
+        if providers.contains(where: { $0.hasItemConformingToTypeIdentifier(UTType.jetVaultItem.identifier) }) {
+            return .vaultItems
         }
-        if !files.isEmpty { receive(files, into: folder) }
-        return moved || !files.isEmpty
+        let files = providers.contains { provider in
+            provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)
+                || provider.registeredTypeIdentifiers.contains { identifier in
+                    guard let type = UTType(identifier) else { return false }
+                    return !type.conforms(to: .text) && !type.conforms(to: .url)
+                        && (type.conforms(to: .data) || type.conforms(to: .content))
+                }
+        }
+        return files ? .files : .nothing
+    }
+
+    /// The paths of dragged sidebar rows.
+    public static func vaultPaths(in providers: [NSItemProvider]) async -> [String] {
+        var paths: [String] = []
+        for provider in providers where provider.hasItemConformingToTypeIdentifier(UTType.jetVaultItem.identifier) {
+            let data: Data? = await withCheckedContinuation { continuation in
+                _ = provider.loadDataRepresentation(forTypeIdentifier: UTType.jetVaultItem.identifier) { data, _ in
+                    continuation.resume(returning: data)
+                }
+            }
+            if let data, let item = try? JSONDecoder().decode(VaultItem.self, from: data) { paths.append(item.path) }
+        }
+        return paths
+    }
+
+    public static func fileURLs(in providers: [NSItemProvider]) async -> [URL] {
+        var urls: [URL] = []
+        for provider in providers {
+            let file: DroppedFile? = await withCheckedContinuation { continuation in
+                _ = provider.loadTransferable(type: DroppedFile.self) { continuation.resume(returning: try? $0.get()) }
+            }
+            if let url = file?.url, url.isFileURL { urls.append(url) }
+        }
+        return urls
+    }
+
+    /// Handles a drop on the window (`folder` nil) or on a folder: rows move into the folder (rows
+    /// dropped elsewhere stay put); files are opened or imported.
+    @MainActor
+    static func handle(_ providers: [NSItemProvider], app: AppModel, into folder: String?) -> Bool {
+        switch classify(providers) {
+        case .vaultItems:
+            guard let folder else { return false }
+            Task { @MainActor in
+                for path in await vaultPaths(in: providers) { app.session?.move(path, into: folder) }
+            }
+            return true
+        case .files:
+            Task { @MainActor in
+                let urls = await fileURLs(in: providers)
+                if !urls.isEmpty { app.receive(urls, into: folder) }
+            }
+            return true
+        case .nothing:
+            return false
+        }
     }
 }
 
@@ -101,6 +153,9 @@ extension VaultSession.ImportReview {
                 .joined(separator: ", ")
         }
         var parts: [String] = []
+        if !refused.isEmpty {
+            parts.append(refused.map { "Not imported: \($0.url.lastPathComponent), because \($0.reason)." }.joined(separator: "\n"))
+        }
         if !tooLarge.isEmpty {
             parts.append("Over 100 MB, so they can't be synced with git and won't be imported: \(list(tooLarge)).")
         }

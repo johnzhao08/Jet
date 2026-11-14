@@ -40,9 +40,9 @@ struct VaultView: View {
             }
         }
         // Files dropped anywhere on the window: opened if they're already in a vault, else imported.
-        .dropDestination(for: DroppedItem.self) { items, _ in
-            app.handleDrop(items, into: nil)
-        } isTargeted: { dropTargeted = $0 }
+        .onDrop(of: FileDrop.acceptedTypes, isTargeted: $dropTargeted) { providers in
+            FileDrop.handle(providers, app: app, into: nil)
+        }
         .overlay {
             if dropTargeted {
                 RoundedRectangle(cornerRadius: 12)
@@ -53,7 +53,7 @@ struct VaultView: View {
             }
         }
         .alert(
-            session.importReview.map { $0.tooLarge.isEmpty ? "Import large files?" : ($0.large.isEmpty ? "Files too large to sync" : "Some files are too large") } ?? "",
+            session.importReview.map { $0.large.isEmpty ? "Some items weren't imported" : "Import large files?" } ?? "",
             isPresented: Binding(get: { session.importReview != nil }, set: { if !$0 { session.importReview = nil } }),
             presenting: session.importReview
         ) { review in
@@ -364,11 +364,12 @@ private struct FolderDrop: ViewModifier {
 
     func body(content: Content) -> some View {
         if let folder {
-            content.dropDestination(for: DroppedItem.self) { items, _ in
+            content.onDrop(of: FileDrop.acceptedTypes, isTargeted: Binding(
+                get: { target == folder },
+                set: { hovering in if hovering { target = folder } else if target == folder { target = nil } }
+            )) { providers in
                 target = nil
-                return app.handleDrop(items, into: folder)
-            } isTargeted: { hovering in
-                if hovering { target = folder } else if target == folder { target = nil }
+                return FileDrop.handle(providers, app: app, into: folder)
             }
         } else {
             content

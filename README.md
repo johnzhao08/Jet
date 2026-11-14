@@ -18,8 +18,10 @@ Plain-file notes with git sync, for iPad and Mac.
   New → Import Files…, or "Open in Jet" / share to Jet from other iPad apps.
 - **Files from elsewhere**: drop files on the window (or on a sidebar folder) on Mac or iPad, or on the
   Mac open them with Jet from Finder (Open With, the Dock icon). A file already in a vault opens in
-  place; anything else is copied in. Files over 100 MB are refused (GitHub won't take them, so sync would
-  stop) and 50–100 MB files ask first.
+  place; anything else is copied in (contents only, not the original's permissions). Files over 100 MB are
+  refused (GitHub won't take them, so sync would stop) and 50–100 MB files ask first. Apps and other
+  bundles, folders Jet can't read (macOS keeps Downloads and Desktop private), folders of more than 1000
+  files and folders containing the vault are refused.
 - **Organizing**: drag files and folders onto a folder in the sidebar (or onto "Files" for the top
   level), or use Move to in a file's menu. PDF annotations move with their PDF.
 - **Linking** (Obsidian-compatible): `[[wikilinks]]` (with `|alias` and `#heading`), backlinks and

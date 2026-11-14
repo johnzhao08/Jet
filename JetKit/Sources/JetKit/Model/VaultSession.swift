@@ -332,9 +332,43 @@ public final class VaultSession {
         return newPath
     }
 
+    /// Copies only what's in a file or folder: not its owner, permissions, locks or access rules,
+    /// which would come along with a plain copy and can make the copy impossible to delete.
+    nonisolated static func copyContents(of source: URL, to destination: URL) throws {
+        let flags = copyfile_flags_t(COPYFILE_DATA | COPYFILE_RECURSIVE | COPYFILE_EXCL | COPYFILE_NOFOLLOW)
+        guard copyfile(source.path, destination.path, nil, flags) == 0 else {
+            let code = errno
+            try? FileManager.default.removeItem(at: destination)
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(code))
+        }
+    }
+
+    /// Deletes a file or folder even when it carries access rules that forbid deleting (for example
+    /// a copy of ~/Downloads made by an older Jet): those rules are cleared first.
+    nonisolated static func forceRemove(_ url: URL) throws {
+        do {
+            try FileManager.default.removeItem(at: url)
+        } catch {
+            let fm = FileManager.default
+            var paths = [url.path]
+            if let items = fm.enumerator(atPath: url.path) {
+                while let item = items.nextObject() as? String { paths.append(url.appendingPathComponent(item).path) }
+            }
+            for path in paths {
+                if let empty = acl_init(0) {
+                    acl_set_file(path, ACL_TYPE_EXTENDED, empty)
+                    acl_free(UnsafeMutableRawPointer(empty))
+                }
+                chflags(path, 0)
+                chmod(path, 0o755)
+            }
+            try fm.removeItem(at: url)
+        }
+    }
+
     public func delete(_ path: String) {
         if let selected = selection, selected == path || selected.hasPrefix(path + "/") { selection = nil }
-        try? FileManager.default.removeItem(at: url(for: path))
+        try? Self.forceRemove(url(for: path))
         try? FileManager.default.removeItem(at: url(for: Self.annotationsPath(for: path)))
         didWriteFile()
         refreshTree()
@@ -375,6 +409,52 @@ public final class VaultSession {
         public var normal: [URL]
         public var large: [(url: URL, size: Int)]
         public var tooLarge: [(url: URL, size: Int)]
+        /// Things Jet won't take at all, with why (apps, unreadable folders, the vault itself…).
+        public var refused: [(url: URL, reason: String)] = []
+    }
+
+    /// Folders bigger than this many files aren't imported: that's a dump of something, not notes.
+    public nonisolated static let largestImportedFolder = 1000
+
+    /// What an import candidate is, before anything is copied.
+    enum ImportCheck: Equatable {
+        case ok(size: Int)
+        case refused(String)
+    }
+
+    /// Checks a file or folder from elsewhere: it must be readable, not an app or other bundle, not
+    /// contain the vault, and (for folders) hold a sane number of plain files.
+    nonisolated static func check(_ url: URL, vaultRoot: URL) -> ImportCheck {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        let keys: Set<URLResourceKey> = [.isDirectoryKey, .isPackageKey, .isSymbolicLinkKey, .isAliasFileKey,
+                                         .totalFileSizeKey, .fileSizeKey]
+        guard let values = try? url.resourceValues(forKeys: keys) else { return .refused("Jet can't read it") }
+        if values.isPackage == true { return .refused("apps and other bundles can't go in a vault") }
+        if values.isSymbolicLink == true || values.isAliasFile == true { return .refused("it's a shortcut to something else") }
+        guard values.isDirectory == true else { return .ok(size: values.totalFileSize ?? values.fileSize ?? 0) }
+
+        let source = url.standardizedFileURL.resolvingSymlinksInPath().path + "/"
+        let root = vaultRoot.standardizedFileURL.resolvingSymlinksInPath().path + "/"
+        if root.hasPrefix(source) || source.hasPrefix(root) { return .refused("it contains this vault") }
+        // macOS keeps some folders (Downloads, Desktop…) private unless you allow it; a folder Jet
+        // can't list would come in empty.
+        guard (try? FileManager.default.contentsOfDirectory(atPath: url.path)) != nil else {
+            return .refused("Jet isn't allowed to read that folder; drag in the files themselves")
+        }
+        var total = 0, count = 0
+        let items = FileManager.default.enumerator(at: url, includingPropertiesForKeys: Array(keys),
+                                                   options: [], errorHandler: { _, _ in false })
+        while let item = items?.nextObject() as? URL {
+            guard let itemValues = try? item.resourceValues(forKeys: keys) else { return .refused("Jet can't read everything in it") }
+            if itemValues.isPackage == true { return .refused("it contains apps or other bundles") }
+            if itemValues.isDirectory != true {
+                count += 1
+                total += itemValues.totalFileSize ?? itemValues.fileSize ?? 0
+            }
+            if count > largestImportedFolder { return .refused("it has more than \(largestImportedFolder) files") }
+        }
+        return .ok(size: total)
     }
 
     /// Imports that need the user's say-so: shown by the vault window.
@@ -386,12 +466,14 @@ public final class VaultSession {
         let folder = folder ?? targetFolder
         var review = ImportReview(folder: folder, normal: [], large: [], tooLarge: [])
         for url in urls {
-            let size = Self.size(of: url)
-            if size > Self.largestSyncableFile { review.tooLarge.append((url, size)) }
-            else if size > Self.largeFileWarning { review.large.append((url, size)) }
-            else { review.normal.append(url) }
+            switch Self.check(url, vaultRoot: root) {
+            case .refused(let reason): review.refused.append((url, reason))
+            case .ok(let size) where size > Self.largestSyncableFile: review.tooLarge.append((url, size))
+            case .ok(let size) where size > Self.largeFileWarning: review.large.append((url, size))
+            case .ok: review.normal.append(url)
+            }
         }
-        if review.large.isEmpty && review.tooLarge.isEmpty {
+        if review.large.isEmpty && review.tooLarge.isEmpty && review.refused.isEmpty {
             finishImport(review.normal, into: folder)
         } else {
             importReview = review
@@ -416,21 +498,6 @@ public final class VaultSession {
         }
     }
 
-    /// Bytes in a file, or in everything inside a folder.
-    nonisolated static func size(of url: URL) -> Int {
-        let scoped = url.startAccessingSecurityScopedResource()
-        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-        let keys: Set<URLResourceKey> = [.isDirectoryKey, .totalFileSizeKey, .fileSizeKey]
-        guard let values = try? url.resourceValues(forKeys: keys) else { return 0 }
-        if values.isDirectory != true { return values.totalFileSize ?? values.fileSize ?? 0 }
-        let items = FileManager.default.enumerator(at: url, includingPropertiesForKeys: Array(keys))
-        var total = 0
-        while let item = items?.nextObject() as? URL {
-            total += (try? item.resourceValues(forKeys: keys)).flatMap { $0.totalFileSize ?? $0.fileSize } ?? 0
-        }
-        return total
-    }
-
     /// Copies files from elsewhere (Files, another app, Finder) into `folder`, keeping their names
     /// (made unique), and opens the last one. Returns the new paths.
     @discardableResult
@@ -450,7 +517,7 @@ public final class VaultSession {
                 var coordinationError: NSError?
                 var copyError: Error?
                 NSFileCoordinator().coordinate(readingItemAt: source, options: .withoutChanges, error: &coordinationError) { readable in
-                    do { try FileManager.default.copyItem(at: readable, to: self.url(for: path)) } catch { copyError = error }
+                    do { try Self.copyContents(of: readable, to: self.url(for: path)) } catch { copyError = error }
                 }
                 if let error = coordinationError ?? copyError { throw error }
                 added.append(path)
