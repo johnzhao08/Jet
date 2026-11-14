@@ -78,6 +78,8 @@ targets:
         INFOPLIST_KEY_CFBundleDisplayName: Jet
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
         INFOPLIST_KEY_NSHumanReadableCopyright: ""
+        # Document types, so Finder can open files with Jet; merged into the generated Info.plist.
+        INFOPLIST_FILE: Config/JetMac-Info.plist
         # Signed for this Mac only ("Sign to Run Locally"); no certificate or notarization needed.
         CODE_SIGN_STYLE: Manual
         CODE_SIGN_IDENTITY: "-"
