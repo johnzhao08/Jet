@@ -12,6 +12,11 @@ Plain-file notes with git sync, for iPad and Mac.
   a graph view of this note or the whole vault (⇧⌘G), and daily notes in `Daily/` (⇧⌘D) made from
   `Templates/Daily.md` with `{{date}}`, `{{title}}` and `{{weekday}}`. Quick open (⌘O) fuzzy-matches titles
   and aliases and creates the note if it doesn't exist.
+- **AI (Mac)**: Jet.app bundles `jet-mcp`, an MCP server that lets Claude, Claude Code, Codex
+  (ChatGPT) or any MCP client list, read, search, link-check and edit a vault. Handwritten notes are
+  sent as page images so the model reads the handwriting. It can create notes, edit text and append,
+  never delete. Set it up from the sidebar's ✨ button (or the ••• menu → Connect AI…), or by hand:
+  `jet-mcp --vault <folder>`. The Mac app shows changes made by other programs live.
 - **Sync**: commit, fetch, merge, push over HTTPS with a personal access token (no SSH).
   Two devices editing the same handwritten note are merged stroke by stroke; the same text note
   keeps your version and saves the other as a "conflict" copy.
@@ -48,7 +53,8 @@ ink merge, deletion), and clones a public repository over HTTPS.
 
 ## Layout
 
-- `JetKit/` Swift package with all app code (`Git/`, `Model/`, `Views/`)
+- `JetKit/` Swift package with all app code (`AI/`, `Git/`, `Model/`, `Views/`)
+- `Tools/jet-mcp/` the MCP helper's entry point
 - `App/` the app target's entry point
 - `Dev/` the self-test (runs without Xcode)
 - `project.yml` XcodeGen spec for `Jet.xcodeproj`
