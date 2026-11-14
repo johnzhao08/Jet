@@ -1,5 +1,8 @@
 #!/bin/sh
-# Launches the Mac app without Xcode.
+# Builds the Mac app (Debug) and opens it.
 set -e
-BIN=$("$(dirname "$0")/Dev/build.sh")
-exec "$BIN/JetDev"
+cd "$(dirname "$0")"
+xcodegen generate --quiet
+xcodebuild -project Jet.xcodeproj -scheme JetMac -configuration Debug -derivedDataPath build/DerivedData \
+    build > build/mac-debug.log 2>&1 || { tail -20 build/mac-debug.log; exit 1; }
+open build/DerivedData/Build/Products/Debug/Jet.app
