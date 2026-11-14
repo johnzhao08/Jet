@@ -89,14 +89,29 @@ private struct SidebarView: View {
     @State private var renaming: FileNode?
     @State private var renameText = ""
     @State private var deleting: FileNode?
+    /// The parent folder of a folder being named, while the "New folder" prompt is up.
+    @State private var newFolderParent: String?
+    @State private var newFolderName = ""
 
     var body: some View {
         List(selection: $session.selection) {
             if session.sidebarQuery.trimmingCharacters(in: .whitespaces).isEmpty {
-                Section("Files") {
+                Section {
                     OutlineGroup(session.tree, children: \.children) { node in
                         FileRow(node: node)
                             .contextMenu { menu(for: node) }
+                    }
+                } header: {
+                    HStack {
+                        Text("Files")
+                        Spacer()
+                        Button { askForFolder(in: session.targetFolder) } label: {
+                            Label("New folder", systemImage: "folder.badge.plus")
+                                .labelStyle(.iconOnly)
+                                .font(.body)
+                        }
+                        .buttonStyle(.borderless)
+                        .help("New folder")
                     }
                 }
                 let tags = session.allTags
@@ -147,7 +162,7 @@ private struct SidebarView: View {
                         Label("Text note", systemImage: "doc.text")
                     }
                     Divider()
-                    Button { session.createFolder() } label: {
+                    Button { askForFolder(in: session.targetFolder) } label: {
                         Label("Folder", systemImage: "folder.badge.plus")
                     }
                 } label: {
@@ -179,6 +194,15 @@ private struct SidebarView: View {
         .safeAreaInset(edge: SyncBar.edge) {
             SyncBar(session: session, showSyncSettings: $showSyncSettings)
         }
+        .alert("New folder", isPresented: Binding(get: { newFolderParent != nil }, set: { if !$0 { newFolderParent = nil } })) {
+            TextField("Folder name", text: $newFolderName)
+            Button("Create") {
+                if let parent = newFolderParent { session.createFolder(in: parent, named: newFolderName) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(newFolderParent.map { $0.isEmpty ? "In the vault's top level." : "Inside “\($0)”." } ?? "")
+        }
         .alert("Rename", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField("Name", text: $renameText)
             Button("Rename") {
@@ -201,6 +225,11 @@ private struct SidebarView: View {
         }
     }
 
+    private func askForFolder(in parent: String) {
+        newFolderName = ""
+        newFolderParent = parent
+    }
+
     @ViewBuilder
     private func menu(for node: FileNode) -> some View {
         let folder = node.isDirectory ? node.path : (node.path as NSString).deletingLastPathComponent
@@ -210,7 +239,7 @@ private struct SidebarView: View {
         Button { session.createNote(kind: .markdown, in: folder) } label: {
             Label("New text note here", systemImage: "doc.text")
         }
-        Button { session.createFolder(in: folder) } label: {
+        Button { askForFolder(in: folder) } label: {
             Label("New folder here", systemImage: "folder.badge.plus")
         }
         Divider()

@@ -206,10 +206,20 @@ public final class VaultSession {
         return path
     }
 
-    public func createFolder(in folder: String? = nil) {
-        let path = uniquePath(folder: folder ?? targetFolder, base: "New Folder", ext: "")
-        try? FileManager.default.createDirectory(at: url(for: path), withIntermediateDirectories: true)
+    /// Creates a folder (renamed "Name 2", "Name 3"… if taken) and returns its path.
+    @discardableResult
+    public func createFolder(in folder: String? = nil, named name: String = "New Folder") -> String? {
+        var clean = name.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "/", with: "-")
+        while clean.hasPrefix(".") { clean.removeFirst() }
+        let path = uniquePath(folder: folder ?? targetFolder, base: clean.isEmpty ? "New Folder" : clean, ext: "")
+        do {
+            try FileManager.default.createDirectory(at: url(for: path), withIntermediateDirectories: true)
+            // Git doesn't track empty folders; a hidden placeholder lets the new folder sync right away.
+            try Data().write(to: url(for: path).appendingPathComponent(".gitkeep"))
+        } catch { return nil }
+        didWriteFile()
         refreshTree()
+        return path
     }
 
     public func rename(_ path: String, to newName: String) {
