@@ -21,6 +21,16 @@ Mac without Xcode:
 ./run-mac.sh
 ```
 
+## Release to TestFlight
+
+```sh
+./release.sh
+```
+
+Bumps the build number, commits and tags it, archives the iPad app, and uploads it to App Store Connect.
+Testers in an internal TestFlight group with automatic distribution get it after Apple's processing.
+`--no-upload` exports the signed `.ipa` to `build/export` instead.
+
 ## Test
 
 ```sh
