@@ -6,6 +6,16 @@ Plain-file notes with git sync, for iPad and Mac.
 - **iPad**: handwritten notes open straight into a PencilKit canvas. Pencil double-tap and squeeze follow
   Settings > Apple Pencil.
 - **Mac**: Markdown editing and reading; handwritten notes are view-only.
+- **Pens**: choose which tools are in the iPad tool picker, and their order (note's ••• menu →
+  Pens & Tools): pen, monoline, fountain pen, highlighter, pencil, watercolor, crayon, eraser, ruler.
+- **Pictures**: insert photos or image files into handwritten notes (under the ink; hold a finger on one
+  to move, resize or delete it) and into Markdown notes (`![[name.png]]` at the cursor). They're saved
+  in `Attachments/`; photos become JPEGs at most 2560 px.
+- **Other files**: PDFs open on the handwriting canvas, so you can write on them with the same tools;
+  the ink is kept in a hidden `.Name.pdf.ink` beside the PDF (which is never modified) and can be
+  shared as an annotated copy. Text and code files (`.txt`, `.csv`, `.json`, …) open in a plain editor;
+  everything else (pictures, Office/iWork documents, audio, video…) in Quick Look. Bring files in with
+  New → Import Files…, or "Open in Jet" / share to Jet from other iPad apps.
 - **Linking** (Obsidian-compatible): `[[wikilinks]]` (with `|alias` and `#heading`), backlinks and
   unlinked mentions under each note (one tap turns a mention into a link), `#tags` and `#nested/tags`
   (sidebar list, tap to filter, search `#tag`), YAML frontmatter properties (`tags`, `aliases` resolve links),
@@ -14,7 +24,8 @@ Plain-file notes with git sync, for iPad and Mac.
   and aliases and creates the note if it doesn't exist.
 - **AI (Mac)**: Jet.app bundles `jet-mcp`, an MCP server that lets Claude, Claude Code, Codex
   (ChatGPT) or any MCP client list, read, search, link-check and edit a vault. Handwritten notes are
-  sent as page images so the model reads the handwriting. It can create notes, edit text and append,
+  sent as page images so the model reads the handwriting; PDFs as their text plus page images with any
+  handwriting on them. It can create notes, edit text and append,
   never delete. Set it up from the sidebar's ✨ button (or the ••• menu → Connect AI…), or by hand:
   `jet-mcp --vault <folder>`. The Mac app shows changes made by other programs live.
 - **Sync**: commit, fetch, merge, push over HTTPS with a personal access token (no SSH).

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Merged with the Info.plist Xcode generates. Lets other apps' share sheets and Files' "Open in"
+     hand documents to Jet, which copies them into the open vault. -->
+<plist version="1.0">
+<dict>
+	<!-- Vaults show up in the Files app (On My iPad > Jet). Xcode doesn't generate this one. -->
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Document</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.adobe.pdf</string>
+				<string>net.daringfireball.markdown</string>
+				<string>public.plain-text</string>
+				<string>public.image</string>
+				<string>public.content</string>
+				<string>public.data</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>

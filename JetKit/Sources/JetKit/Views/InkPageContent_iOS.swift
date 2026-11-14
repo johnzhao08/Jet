@@ -26,6 +26,16 @@ final class PageContentView: UIView {
         transform = CGAffineTransform(scaleX: zoom, y: zoom)
     }
 
+    /// A PDF's pages, behind everything else. Each page draws itself in tiles, sharp at any zoom.
+    func setPDF(_ pdf: PDFPages) {
+        for index in pdf.frames.indices {
+            guard let page = pdf.page(index) else { continue }
+            let view = PDFPageView(page: page)
+            view.frame = pdf.frames[index]
+            insertSubview(view, at: index)
+        }
+    }
+
     func setImages(_ images: [InkImage]) {
         let ids = Set(images.map(\.id))
         for (id, view) in imageViews where !ids.contains(id) {
@@ -79,6 +89,45 @@ final class PageContentView: UIView {
                 }
             }
         }
+    }
+}
+
+/// One PDF page, drawn on demand in tiles (at a finer level of detail as you zoom in).
+final class PDFPageView: UIView {
+    override class var layerClass: AnyClass { CATiledLayer.self }
+    private let page: CGPDFPage
+
+    init(page: CGPDFPage) {
+        self.page = page
+        super.init(frame: .zero)
+        backgroundColor = .white
+        isUserInteractionEnabled = false
+        let tiled = layer as! CATiledLayer
+        tiled.levelsOfDetail = 4
+        tiled.levelsOfDetailBias = 4
+        tiled.tileSize = CGSize(width: 512, height: 512)
+        layer.shadowColor = UIColor.black.cgColor
+        layer.shadowOpacity = 0.12
+        layer.shadowRadius = 4
+        layer.shadowOffset = CGSize(width: 0, height: 1)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        layer.shadowPath = UIBezierPath(rect: bounds).cgPath
+    }
+
+    // CATiledLayer calls this on background threads, one tile at a time.
+    override func draw(_ rect: CGRect) {
+        guard let context = UIGraphicsGetCurrentContext() else { return }
+        context.setFillColor(UIColor.white.cgColor)
+        context.fill(rect)
+        context.translateBy(x: 0, y: bounds.height)
+        context.scaleBy(x: 1, y: -1)
+        PDFPages.draw(page, in: context, rect: CGRect(origin: .zero, size: bounds.size))
     }
 }
 

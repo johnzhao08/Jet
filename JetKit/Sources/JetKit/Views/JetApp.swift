@@ -59,12 +59,18 @@ struct RootView: View {
     @Environment(AppModel.self) private var app
 
     var body: some View {
-        if let session = app.session {
-            VaultView(session: session)
-                .id(session.ref.id)
-        } else {
-            WelcomeView()
+        Group {
+            if let session = app.session {
+                VaultView(session: session)
+                    .id(session.ref.id)
+                    .task { app.importPending() }
+            } else {
+                WelcomeView()
+            }
         }
+        #if os(iOS)
+        .onOpenURL { url in app.receive(url) }
+        #endif
     }
 }
 

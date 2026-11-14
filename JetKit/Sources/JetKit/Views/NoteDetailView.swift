@@ -6,27 +6,40 @@ struct NoteDetailView: View {
     let path: String
 
     private var ext: String { (path as NSString).pathExtension.lowercased() }
-    private var title: String { ((path as NSString).lastPathComponent as NSString).deletingPathExtension }
+    private var title: String {
+        let name = (path as NSString).lastPathComponent
+        return [.ink, .markdown].contains(FileKind(path: path)) ? (name as NSString).deletingPathExtension : name
+    }
+
+    private var fileSize: Int {
+        (try? FileManager.default.attributesOfItem(atPath: session.url(for: path).path)[.size] as? Int) ?? 0
+    }
 
     var body: some View {
         Group {
-            switch ext {
-            case "ink":
+            switch FileKind(path: path) {
+            case .ink:
                 InkNoteView(session: session, path: path)
-            case "md", "markdown", "txt":
+            case .markdown:
                 MarkdownNoteView(session: session, path: path)
-            case "png", "jpg", "jpeg", "gif", "heic", "webp":
-                ScrollView([.vertical, .horizontal]) {
-                    if let image = PlatformImage(contentsOfFile: session.url(for: path).path) {
-                        Image(platformImage: image)
-                    }
+            case .text where fileSize < 4_000_000:
+                PlainTextView(session: session, path: path)
+            case .pdf:
+                if let pdf = PDFPages(url: session.url(for: path)) {
+                    InkNoteView(session: session, path: path, pdf: pdf)
+                } else {
+                    // Locked or damaged: Quick Look can still show it (and ask for a password).
+                    FilePreview(url: session.url(for: path))
                 }
-            default:
-                ContentUnavailableView(
-                    "Can't open this file",
-                    systemImage: "doc.questionmark",
-                    description: Text("Jet opens Markdown (.md), handwritten (.ink) and image files.")
-                )
+            case .image, .text, .other:
+                FilePreview(url: session.url(for: path))
+                    .toolbar {
+                        ToolbarItem(placement: .primaryAction) {
+                            ShareLink(item: session.url(for: path)) {
+                                Label("Share", systemImage: "square.and.arrow.up")
+                            }
+                        }
+                    }
             }
         }
         .navigationTitle(title)

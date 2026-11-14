@@ -288,6 +288,11 @@ public final class VaultSession {
         do {
             try FileManager.default.moveItem(at: url(for: path), to: url(for: newPath))
         } catch { return }
+        // A PDF's annotations travel with it.
+        let notes = Self.annotationsPath(for: path)
+        if exists(notes) {
+            try? FileManager.default.moveItem(at: url(for: notes), to: url(for: Self.annotationsPath(for: newPath)))
+        }
         didWriteFile()
         refreshTree()
         if wasSelected { selection = newPath }
@@ -296,6 +301,7 @@ public final class VaultSession {
     public func delete(_ path: String) {
         if let selected = selection, selected == path || selected.hasPrefix(path + "/") { selection = nil }
         try? FileManager.default.removeItem(at: url(for: path))
+        try? FileManager.default.removeItem(at: url(for: Self.annotationsPath(for: path)))
         didWriteFile()
         refreshTree()
     }
@@ -322,6 +328,40 @@ public final class VaultSession {
         didWriteFile()
         refreshTree()
         return path
+    }
+
+    /// Copies files from elsewhere (Files, another app, Finder) into `folder`, keeping their names
+    /// (made unique), and opens the last one. Returns the new paths.
+    @discardableResult
+    public func importFiles(_ urls: [URL], into folder: String? = nil) -> [String] {
+        let folder = folder ?? targetFolder
+        var added: [String] = []
+        for source in urls {
+            let scoped = source.startAccessingSecurityScopedResource()
+            defer { if scoped { source.stopAccessingSecurityScopedResource() } }
+            var base = source.deletingPathExtension().lastPathComponent
+            while base.hasPrefix(".") { base.removeFirst() }
+            if base.isEmpty { base = "Imported" }
+            let path = uniquePath(folder: folder, base: base, ext: source.pathExtension)
+            do {
+                try FileManager.default.createDirectory(at: url(for: folder), withIntermediateDirectories: true)
+                // Coordinated, so files still downloading from iCloud or another provider arrive whole.
+                var coordinationError: NSError?
+                var copyError: Error?
+                NSFileCoordinator().coordinate(readingItemAt: source, options: .withoutChanges, error: &coordinationError) { readable in
+                    do { try FileManager.default.copyItem(at: readable, to: self.url(for: path)) } catch { copyError = error }
+                }
+                if let error = coordinationError ?? copyError { throw error }
+                added.append(path)
+            } catch {
+                continue
+            }
+        }
+        guard !added.isEmpty else { return [] }
+        didWriteFile()
+        refreshTree()
+        selection = added.last
+        return added
     }
 
     /// How a note should name a file in a `![[…]]` embed: just its file name when that's unique in

@@ -16,13 +16,15 @@ import PencilKit
 struct InkCanvasRepresentable: UIViewControllerRepresentable {
     let model: InkNoteModel
     let root: URL
+    /// Set when annotating a PDF: its pages go under the ink.
+    var pdf: PDFPages?
     let generation: Int
     let paper: PaperStyle
     let showsToolPicker: Bool
     let tools: [InkPickerTool]
 
     func makeUIViewController(context: Context) -> InkCanvasController {
-        InkCanvasController(model: model, root: root, tools: tools)
+        InkCanvasController(model: model, root: root, tools: tools, pdf: pdf)
     }
 
     func updateUIViewController(_ controller: InkCanvasController, context: Context) {
@@ -33,6 +35,7 @@ struct InkCanvasRepresentable: UIViewControllerRepresentable {
 final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPencilInteractionDelegate,
     PKToolPickerObserver, UIGestureRecognizerDelegate {
     private let model: InkNoteModel
+    private let pdf: PDFPages?
     private let canvas = PKCanvasView()
     private let paperView = PaperLinesView()
     private let pageContent: PageContentView
@@ -78,8 +81,9 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
     /// Page height in page points (the page is `InkDocument.pageWidth` wide). Only ever grows while open.
     private var pageHeight: CGFloat = 0
 
-    init(model: InkNoteModel, root: URL, tools: [InkPickerTool]) {
+    init(model: InkNoteModel, root: URL, tools: [InkPickerTool], pdf: PDFPages? = nil) {
         self.model = model
+        self.pdf = pdf
         self.tools = tools
         pageContent = PageContentView(root: root)
         toolPicker = PKToolPicker()
@@ -95,6 +99,13 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .systemBackground
+        if let pdf {
+            // PDF pages are white paper, so ink keeps its light-mode colours here even in dark mode.
+            overrideUserInterfaceStyle = .light
+            view.backgroundColor = .systemGray5
+            paperView.isHidden = true
+            pageContent.setPDF(pdf)
+        }
 
         paperView.frame = view.bounds
         paperView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
@@ -243,7 +254,8 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
         lassoItem = PKToolPickerLassoItem()
         spaceItem = Self.makeInsertSpaceItem()
         var items: [PKToolPickerItem] = tools.filter { $0 != .ruler }.map(Self.item)
-        items += [lassoItem, spaceItem]
+        items.append(lassoItem)
+        if pdf == nil { items.append(spaceItem) }  // a PDF's pages can't make room
         if tools.contains(.ruler) { items.append(PKToolPickerRulerItem()) }
         return PKToolPicker(toolItems: items)
     }
@@ -313,7 +325,7 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
         switch tool {
         case _ where tool == mode, .draw: returnToPreviousTool()
         case .lasso: selectItem(lassoItem.identifier)
-        case .insertSpace: selectItem(spaceItem.identifier)
+        case .insertSpace: if pdf == nil { selectItem(spaceItem.identifier) }
         }
     }
 
@@ -665,8 +677,12 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
         let zoom = canvas.zoomScale
         let bounds = images.reduce(canvas.drawing.bounds) { $0.union($1.frame) }
         let inkBottom = bounds.isNull ? 0 : bounds.maxY
-        // Always leave most of a screen of fresh paper below the last stroke.
-        pageHeight = max(pageHeight, inkBottom + 900, canvas.bounds.height / max(zoom, 0.01) + 300)
+        if let pdf {
+            pageHeight = max(pdf.height, inkBottom + 40)
+        } else {
+            // Always leave most of a screen of fresh paper below the last stroke.
+            pageHeight = max(pageHeight, inkBottom + 900, canvas.bounds.height / max(zoom, 0.01) + 300)
+        }
         let size = CGSize(width: InkDocument.pageWidth * zoom, height: pageHeight * zoom)
         if abs(canvas.contentSize.width - size.width) > 0.5 || abs(canvas.contentSize.height - size.height) > 0.5 {
             canvas.contentSize = size
