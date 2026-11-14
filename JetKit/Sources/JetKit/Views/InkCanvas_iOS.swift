@@ -18,13 +18,14 @@ struct InkCanvasRepresentable: UIViewControllerRepresentable {
     let generation: Int
     let paper: PaperStyle
     let showsToolPicker: Bool
+    let tools: [InkPickerTool]
 
     func makeUIViewController(context: Context) -> InkCanvasController {
-        InkCanvasController(model: model)
+        InkCanvasController(model: model, tools: tools)
     }
 
     func updateUIViewController(_ controller: InkCanvasController, context: Context) {
-        controller.apply(generation: generation, paper: paper, showsToolPicker: showsToolPicker)
+        controller.apply(generation: generation, paper: paper, showsToolPicker: showsToolPicker, tools: tools)
     }
 }
 
@@ -37,20 +38,13 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
     private lazy var insertSpacePan = UIPanGestureRecognizer(target: self, action: #selector(handleInsertSpace(_:)))
     private lazy var lassoWatcher = TouchWatcher { [weak self] path, touchType in self?.lassoGestureEnded(path, touchType) }
 
-    // The tool picker holds Apple's tools plus the lasso and Jet's own Insert Space tool, so it shows
-    // which one is active, and the Pencil's "switch to previous tool" moves between all of them.
-    private let lassoItem = PKToolPickerLassoItem()
-    private let spaceItem = InkCanvasController.makeInsertSpaceItem()
-    private lazy var toolPicker = PKToolPicker(toolItems: [
-        PKToolPickerInkingItem(type: .pen),
-        PKToolPickerInkingItem(type: .monoline),
-        PKToolPickerInkingItem(type: .marker),
-        PKToolPickerInkingItem(type: .pencil),
-        PKToolPickerEraserItem(type: .vector),
-        lassoItem,
-        spaceItem,
-        PKToolPickerRulerItem(),
-    ])
+    // The tool picker holds the pens the user picked (Pens & Tools) plus the lasso and Jet's own
+    // Insert Space tool, so it shows which one is active, and the Pencil's "switch to previous tool"
+    // moves between all of them.
+    private var tools: [InkPickerTool]
+    private var lassoItem = PKToolPickerLassoItem()
+    private var spaceItem = InkCanvasController.makeInsertSpaceItem()
+    private var toolPicker: PKToolPicker
 
     private var mode = InkMode.draw
     /// The selected tool item, the one before it (for the Pencil's "switch to previous tool" while the
@@ -74,9 +68,12 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
     /// Page height in page points (the page is `InkDocument.pageWidth` wide). Only ever grows while open.
     private var pageHeight: CGFloat = 0
 
-    init(model: InkNoteModel) {
+    init(model: InkNoteModel, tools: [InkPickerTool]) {
         self.model = model
+        self.tools = tools
+        toolPicker = PKToolPicker()
         super.init(nibName: nil, bundle: nil)
+        toolPicker = makeToolPicker()
     }
 
     @available(*, unavailable)
@@ -104,16 +101,7 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
         canvas.tool = PKInkingTool(.pen, color: .label, width: 3)
         view.addSubview(canvas)
 
-        toolPicker.stateAutosaveName = "jet.ink.toolpicker"
-        toolPicker.addObserver(canvas)
-        toolPicker.addObserver(self)
-        // A fresh page always starts with a writing tool, never the lasso or insert space.
-        if isSpecial(toolPicker.selectedToolItemIdentifier) {
-            toolPicker.selectedToolItemIdentifier = toolPicker.toolItems.first?.identifier ?? ""
-        }
-        currentItemID = toolPicker.selectedToolItemIdentifier
-        previousItemID = toolPicker.toolItems.first { $0 is PKToolPickerEraserItem }?.identifier ?? currentItemID
-        returnItemID = currentItemID
+        configureToolPicker()
 
         spaceGuide.frame = view.bounds
         spaceGuide.autoresizingMask = [.flexibleWidth, .flexibleHeight]
@@ -193,8 +181,12 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
 
     // MARK: State from SwiftUI
 
-    func apply(generation: Int, paper: PaperStyle, showsToolPicker: Bool) {
+    func apply(generation: Int, paper: PaperStyle, showsToolPicker: Bool, tools: [InkPickerTool]) {
         loadViewIfNeeded()
+        if tools != self.tools {
+            self.tools = tools
+            rebuildToolPicker()
+        }
         if generation != appliedGeneration {
             appliedGeneration = generation
             canvas.drawing = model.drawing
@@ -212,6 +204,63 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
     }
 
     // MARK: Tools, lasso and insert space
+
+    private func makeToolPicker() -> PKToolPicker {
+        lassoItem = PKToolPickerLassoItem()
+        spaceItem = Self.makeInsertSpaceItem()
+        var items: [PKToolPickerItem] = tools.filter { $0 != .ruler }.map(Self.item)
+        items += [lassoItem, spaceItem]
+        if tools.contains(.ruler) { items.append(PKToolPickerRulerItem()) }
+        return PKToolPicker(toolItems: items)
+    }
+
+    private static func item(_ tool: InkPickerTool) -> PKToolPickerItem {
+        switch tool {
+        case .pen: PKToolPickerInkingItem(type: .pen)
+        case .monoline: PKToolPickerInkingItem(type: .monoline)
+        case .fountainPen: PKToolPickerInkingItem(type: .fountainPen)
+        case .marker: PKToolPickerInkingItem(type: .marker)
+        case .pencil: PKToolPickerInkingItem(type: .pencil)
+        case .watercolor: PKToolPickerInkingItem(type: .watercolor)
+        case .crayon: PKToolPickerInkingItem(type: .crayon)
+        case .eraser: PKToolPickerEraserItem(type: .vector)
+        case .ruler: PKToolPickerRulerItem()
+        }
+    }
+
+    private func configureToolPicker() {
+        toolPicker.stateAutosaveName = "jet.ink.toolpicker"
+        toolPicker.addObserver(canvas)
+        toolPicker.addObserver(self)
+        // A fresh page always starts with a writing tool, never the lasso or insert space.
+        if isSpecial(toolPicker.selectedToolItemIdentifier)
+            || !toolPicker.toolItems.contains(where: { $0.identifier == toolPicker.selectedToolItemIdentifier }) {
+            toolPicker.selectedToolItemIdentifier = toolPicker.toolItems.first?.identifier ?? ""
+        }
+        currentItemID = toolPicker.selectedToolItemIdentifier
+        previousItemID = toolPicker.toolItems.first { $0 is PKToolPickerEraserItem }?.identifier ?? currentItemID
+        returnItemID = currentItemID
+        mode = .draw
+        lassoSelection = nil
+        spaceGuide.hint = nil
+        applyModeState()
+        if model.mode != .draw { model.mode = .draw }
+        canvas.tool = toolPicker.selectedTool
+    }
+
+    /// The pens changed in Pens & Tools: swap in a picker with the new set, keeping the tool in hand if it's still there.
+    private func rebuildToolPicker() {
+        let selected = toolPicker.selectedToolItemIdentifier
+        toolPicker.setVisible(false, forFirstResponder: canvas)
+        toolPicker.removeObserver(canvas)
+        toolPicker.removeObserver(self)
+        toolPicker = makeToolPicker()
+        if !isSpecial(selected), toolPicker.toolItems.contains(where: { $0.identifier == selected }) {
+            toolPicker.selectedToolItemIdentifier = selected
+        }
+        configureToolPicker()
+        if view.window != nil { showToolPicker(pickerWanted) }
+    }
 
     private static func makeInsertSpaceItem() -> PKToolPickerCustomItem {
         var configuration = PKToolPickerCustomItem.Configuration(identifier: "jet.insert-space", name: "Insert Space")

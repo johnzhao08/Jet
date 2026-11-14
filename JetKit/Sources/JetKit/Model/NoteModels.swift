@@ -162,3 +162,69 @@ public final class MarkdownNoteModel {
         text = lines.joined(separator: "\n")
     }
 }
+
+/// A tool that can sit in the iPad's tool picker, besides the lasso and Insert Space (always there).
+public enum InkPickerTool: String, CaseIterable, Identifiable, Sendable {
+    case pen, monoline, fountainPen, marker, pencil, watercolor, crayon, eraser, ruler
+
+    public var id: String { rawValue }
+
+    public var label: String {
+        switch self {
+        case .pen: "Pen"
+        case .monoline: "Monoline"
+        case .fountainPen: "Fountain pen"
+        case .marker: "Highlighter"
+        case .pencil: "Pencil"
+        case .watercolor: "Watercolor"
+        case .crayon: "Crayon"
+        case .eraser: "Eraser"
+        case .ruler: "Ruler"
+        }
+    }
+
+    public var detail: String {
+        switch self {
+        case .pen: "Smooth ink that varies with pressure"
+        case .monoline: "Even-width ink, like a ballpoint"
+        case .fountainPen: "Ink that varies with the angle of the Pencil"
+        case .marker: "See-through marker for highlighting"
+        case .pencil: "Textured graphite; tilt to shade"
+        case .watercolor: "Soft colour that blends"
+        case .crayon: "Waxy, textured colour"
+        case .eraser: "Erases whole strokes or pixels"
+        case .ruler: "Draw straight lines along it"
+        }
+    }
+
+    public var symbol: String {
+        switch self {
+        case .pen: "pencil.tip"
+        case .monoline: "pencil.line"
+        case .fountainPen: "pencil.and.scribble"
+        case .marker: "highlighter"
+        case .pencil: "pencil"
+        case .watercolor: "paintbrush"
+        case .crayon: "paintbrush.pointed"
+        case .eraser: "eraser"
+        case .ruler: "ruler"
+        }
+    }
+
+    /// Whether this tool puts ink on the page (the picker needs at least one).
+    public var inks: Bool { self != .eraser && self != .ruler }
+
+    public static let defaults: [InkPickerTool] = [.pen, .monoline, .marker, .pencil, .eraser, .ruler]
+    public static let storageKey = "jet.ink.tools"
+
+    /// The tools in the picker, in order, from their stored form ("pen,marker,eraser").
+    public static func decode(_ stored: String) -> [InkPickerTool] {
+        var seen = Set<InkPickerTool>()
+        let tools = stored.split(separator: ",").compactMap { InkPickerTool(rawValue: String($0)) }.filter { seen.insert($0).inserted }
+        return tools.contains(where: \.inks) ? tools : defaults
+    }
+
+    public static func encode(_ tools: [InkPickerTool]) -> String {
+        tools.map(\.rawValue).joined(separator: ",")
+    }
+}
