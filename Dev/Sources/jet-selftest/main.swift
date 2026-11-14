@@ -193,5 +193,48 @@ if CommandLine.arguments.contains("--https") {
     }
 }
 
+print("10. Links, tags and properties")
+do {
+    let note = """
+    ---
+    tags: [project, jet/ideas]
+    aliases:
+      - Jet app
+    status: "draft"
+    ---
+    # Plan #heading-tag
+    Ship the [[Graph View]] and see [[Folder/Daily Notes.md#Today|today]]. #project #2026 #reading/books
+    `#code-tag` stays code, and so does a [[Graph View]] mention. Email me at a#b.
+    ```
+    #fenced
+    ```
+    """
+    let front = NoteSyntax.frontmatter(in: note)
+    expect(front.lineCount == 6, "frontmatter spans its --- block")
+    expect(front.properties.first { $0.key == "aliases" }?.values == ["Jet app"], "list property parsed")
+    expect(front.properties.first { $0.key == "status" }?.values == ["draft"], "quoted value unquoted")
+    let tags = NoteSyntax.tags(in: note, properties: front.properties)
+    expect(tags == ["project", "jet/ideas", "heading-tag", "reading/books"], "tags from properties and text, no code/numbers/dupes (got \(tags))")
+    expect(NoteSyntax.linkTargets(in: note) == ["Graph View", "Daily Notes", "Graph View"], "link targets drop folders, extensions and headings")
+
+    let mentions = "Graph view is neat. The [[Graph View]] link and `Graph View` code don't count; Graph Viewer is another word."
+    expect(NoteSyntax.unlinkedMentionRanges(of: "Graph View", in: mentions).count == 1, "unlinked mention: whole words outside links/code")
+    expect(NoteSyntax.linkingFirstMention(of: "Graph View", in: mentions)?.hasPrefix("[[Graph view]] is neat") == true,
+           "linking a mention keeps its wording")
+
+    let vault = work.appendingPathComponent("links")
+    try fm.createDirectory(at: vault, withIntermediateDirectories: true)
+    try note.write(to: vault.appendingPathComponent("Plan.md"), atomically: true, encoding: .utf8)
+    try "Back to the [[Jet app]].".write(to: vault.appendingPathComponent("Graph View.md"), atomically: true, encoding: .utf8)
+    let index = LinkIndex.build(root: vault, markdown: ["Plan.md", "Graph View.md"],
+                                titles: ["plan": "Plan.md", "graph view": "Graph View.md"])
+    expect(index.outgoing["Plan.md"] == ["Graph View.md"], "outgoing links resolve to existing notes only")
+    expect(index.backlinks["Plan.md"] == ["Graph View.md"], "a link to an alias counts as a backlink")
+    expect(index.tags["jet/ideas"] == ["Plan.md"], "tag index")
+} catch {
+    failures += 1
+    print("  FAIL  threw: \(error.localizedDescription)")
+}
+
 print(failures == 0 ? "\nAll checks passed." : "\n\(failures) check(s) failed.")
 exit(failures == 0 ? 0 : 1)

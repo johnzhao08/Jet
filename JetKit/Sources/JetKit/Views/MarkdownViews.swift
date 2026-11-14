@@ -15,13 +15,11 @@ struct MarkdownNoteView: View {
         _model = State(initialValue: MarkdownNoteModel(url: session.url(for: path)))
     }
 
-    private var title: String { ((path as NSString).lastPathComponent as NSString).deletingPathExtension }
-
     var body: some View {
         @Bindable var model = model
         Group {
             if reading {
-                MarkdownPreview(session: session, model: model, title: title)
+                MarkdownPreview(session: session, model: model, path: path)
             } else {
                 TextEditor(text: $model.text)
                     .font(.system(.body, design: .monospaced))
@@ -31,6 +29,20 @@ struct MarkdownNoteView: View {
             }
         }
         .toolbar {
+            if VaultSession.dailyDate(of: path) != nil {
+                ToolbarItemGroup(placement: .primaryAction) {
+                    Button { open(dailyNeighbor(before: true)) } label: {
+                        Label("Previous day", systemImage: "chevron.left")
+                    }
+                    .disabled(dailyNeighbor(before: true) == nil)
+                    .help("Previous daily note")
+                    Button { open(dailyNeighbor(before: false)) } label: {
+                        Label("Next day", systemImage: "chevron.right")
+                    }
+                    .disabled(dailyNeighbor(before: false) == nil)
+                    .help("Next daily note")
+                }
+            }
             ToolbarItem(placement: .primaryAction) {
                 Button { reading.toggle() } label: {
                     Label(reading ? "Edit" : "Read", systemImage: reading ? "pencil" : "book")
@@ -49,6 +61,20 @@ struct MarkdownNoteView: View {
         }
         .onChange(of: session.contentVersion) { model.reloadIfChangedOnDisk() }
     }
+
+    private func open(_ path: String?) {
+        if let path { session.selection = path }
+    }
+
+    /// The closest existing daily note before or after this one.
+    private func dailyNeighbor(before: Bool) -> String? {
+        let days = session.allNotes.map(\.path)
+            .filter { VaultSession.dailyDate(of: $0) != nil }
+            .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+        return before
+            ? days.last { $0.localizedStandardCompare(path) == .orderedAscending }
+            : days.first { $0.localizedStandardCompare(path) == .orderedDescending }
+    }
 }
 
 // MARK: - Parsing
@@ -63,6 +89,7 @@ struct MarkdownBlock: Identifiable {
         case quote(String)
         case code(String)
         case embed(String)
+        case properties([NoteSyntax.Property])
         case rule
     }
 
@@ -76,6 +103,10 @@ struct MarkdownBlock: Identifiable {
         var paragraphStart = 0
         var code: [String]?
         var codeStart = 0
+        let frontmatter = NoteSyntax.frontmatter(in: source)
+        if frontmatter.lineCount > 0, !frontmatter.properties.isEmpty {
+            blocks.append(MarkdownBlock(id: 0, kind: .properties(frontmatter.properties)))
+        }
 
         func flush() {
             guard !paragraph.isEmpty else { return }
@@ -83,7 +114,7 @@ struct MarkdownBlock: Identifiable {
             paragraph = []
         }
 
-        for (index, rawLine) in source.components(separatedBy: "\n").enumerated() {
+        for (index, rawLine) in source.components(separatedBy: "\n").enumerated() where index >= frontmatter.lineCount {
             let line = rawLine.hasSuffix("\r") ? String(rawLine.dropLast()) : rawLine
             let trimmed = line.trimmingCharacters(in: .whitespaces)
 
@@ -144,17 +175,32 @@ struct MarkdownBlock: Identifiable {
         return blocks
     }
 
-    /// Inline Markdown, with `[[wikilinks]]` turned into `jet://note/…` links.
+    /// Inline Markdown, with `[[wikilinks]]` turned into `jet://note/…` links and `#tags` into `jet://tag/…` links.
+    /// Text inside `inline code` is left alone.
     static func inline(_ text: String) -> AttributedString {
-        let linked = text.replacing(#/\[\[([^\]]+)\]\]/#) { match -> String in
+        let linked = text.split(separator: "`", omittingEmptySubsequences: false).enumerated().map { index, part in
+            index.isMultiple(of: 2) ? linkify(String(part)) : String(part)
+        }.joined(separator: "`")
+        let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        return (try? AttributedString(markdown: linked, options: options)) ?? AttributedString(text)
+    }
+
+    private static func linkify(_ text: String) -> String {
+        let withLinks = text.replacing(#/\[\[([^\]]+)\]\]/#) { match -> String in
             let parts = match.1.split(separator: "|", maxSplits: 1).map(String.init)
             let target = parts.first ?? ""
             let label = parts.count > 1 ? parts[1] : target
-            let encoded = target.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? target
-            return "[\(label)](jet://note/\(encoded))"
+            return "[\(label)](jet://note/\(encode(target)))"
         }
-        let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        return (try? AttributedString(markdown: linked, options: options)) ?? AttributedString(text)
+        return withLinks.replacing(#/(^|\s)#([\p{L}\p{N}_\/-]+)/#) { match -> String in
+            let tag = String(match.2)
+            guard NoteSyntax.isTag(tag) else { return String(match.0) }
+            return "\(match.1)[#\(tag)](jet://tag/\(encode(tag)))"
+        }
+    }
+
+    private static func encode(_ value: String) -> String {
+        value.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? value
     }
 }
 
@@ -163,27 +209,41 @@ struct MarkdownBlock: Identifiable {
 struct MarkdownPreview: View {
     let session: VaultSession
     let model: MarkdownNoteModel
-    let title: String
+    let path: String
+
+    @State private var unlinked: [SearchHit] = []
 
     var body: some View {
         let blocks = MarkdownBlock.parse(model.text)
-        let mentions = (session.backlinks[title.lowercased()] ?? []).sorted()
+        let backlinks = (session.index.backlinks[path] ?? []).sorted { $0.localizedStandardCompare($1) == .orderedAscending }
         ScrollView {
             VStack(alignment: .leading, spacing: 10) {
                 ForEach(blocks) { block in
                     view(for: block)
                 }
-                if !mentions.isEmpty {
+                if !backlinks.isEmpty || !unlinked.isEmpty {
                     Divider().padding(.top, 24)
+                }
+                if !backlinks.isEmpty {
                     Text("Linked from").font(.caption).foregroundStyle(.secondary)
-                    ForEach(mentions, id: \.self) { path in
+                    ForEach(backlinks, id: \.self) { source in
                         Button {
-                            session.selection = path
+                            session.selection = source
                         } label: {
-                            Label(((path as NSString).lastPathComponent as NSString).deletingPathExtension,
-                                  systemImage: "arrow.turn.down.right")
+                            Label(noteTitle(source), systemImage: "arrow.turn.down.right")
                         }
                         .buttonStyle(.plain).foregroundStyle(Color.accentColor)
+                    }
+                }
+                if !unlinked.isEmpty {
+                    Text("Mentioned in (not linked)").font(.caption).foregroundStyle(.secondary)
+                        .padding(.top, backlinks.isEmpty ? 0 : 8)
+                    ForEach(unlinked) { hit in
+                        UnlinkedMentionRow(hit: hit) {
+                            session.selection = hit.path
+                        } link: {
+                            session.linkMention(in: hit.path, to: path)
+                        }
                     }
                 }
             }
@@ -192,11 +252,22 @@ struct MarkdownPreview: View {
             .frame(maxWidth: .infinity)
             .textSelection(.enabled)
         }
+        .task(id: session.indexVersion) {
+            unlinked = await session.unlinkedMentions(of: path)
+        }
         .environment(\.openURL, OpenURLAction { url in
             guard url.scheme == "jet" else { return .systemAction }
-            session.openLink(String(url.path.dropFirst()))
+            let value = String(url.path.dropFirst())
+            switch url.host {
+            case "tag": session.sidebarQuery = "#" + value
+            default: session.openLink(value)
+            }
             return .handled
         })
+    }
+
+    private func noteTitle(_ path: String) -> String {
+        ((path as NSString).lastPathComponent as NSString).deletingPathExtension
     }
 
     @ViewBuilder
@@ -244,9 +315,35 @@ struct MarkdownPreview: View {
             .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
         case .embed(let target):
             embed(target)
+        case .properties(let properties):
+            propertiesView(properties)
         case .rule:
             Divider()
         }
+    }
+
+    private func propertiesView(_ properties: [NoteSyntax.Property]) -> some View {
+        Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 16, verticalSpacing: 6) {
+            ForEach(properties, id: \.self) { property in
+                GridRow {
+                    Text(property.key).foregroundStyle(.secondary)
+                    Text(MarkdownBlock.inline(display(property)))
+                }
+            }
+        }
+        .font(.callout)
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
+        .padding(.bottom, 6)
+    }
+
+    /// Tag properties render as tappable `#tags`, lists as comma-separated values.
+    private func display(_ property: NoteSyntax.Property) -> String {
+        if ["tags", "tag"].contains(property.key.lowercased()) {
+            return NoteSyntax.tags(in: "", properties: [property]).map { "#" + $0 }.joined(separator: " ")
+        }
+        return property.values.isEmpty ? "—" : property.values.joined(separator: ", ")
     }
 
     private func listRow(indent: Int, marker: Text, text: String) -> some View {
@@ -279,6 +376,34 @@ struct MarkdownPreview: View {
             }
         } else {
             Text("Missing: \(name)").foregroundStyle(.secondary).italic()
+        }
+    }
+}
+
+/// A note that mentions the open note's title as plain text, with a button that turns the mention into a link.
+private struct UnlinkedMentionRow: View {
+    let hit: SearchHit
+    let open: () -> Void
+    let link: () -> Void
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Button(action: open) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Label(((hit.path as NSString).lastPathComponent as NSString).deletingPathExtension,
+                          systemImage: "text.quote")
+                        .foregroundStyle(Color.accentColor)
+                    if !hit.snippet.isEmpty {
+                        Text(hit.snippet).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            Button("Link", action: link)
+                .controlSize(.small)
+                .help("Turn this mention into a [[link]]")
         }
     }
 }

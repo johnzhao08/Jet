@@ -6,6 +6,12 @@ Plain-file notes with git sync, for iPad and Mac.
 - **iPad**: handwritten notes open straight into a PencilKit canvas. Pencil double-tap and squeeze follow
   Settings > Apple Pencil.
 - **Mac**: Markdown editing and reading; handwritten notes are view-only.
+- **Linking** (Obsidian-compatible): `[[wikilinks]]` (with `|alias` and `#heading`), backlinks and
+  unlinked mentions under each note (one tap turns a mention into a link), `#tags` and `#nested/tags`
+  (sidebar list, tap to filter, search `#tag`), YAML frontmatter properties (`tags`, `aliases` resolve links),
+  a graph view of this note or the whole vault (⇧⌘G), and daily notes in `Daily/` (⇧⌘D) made from
+  `Templates/Daily.md` with `{{date}}`, `{{title}}` and `{{weekday}}`. Quick open (⌘O) fuzzy-matches titles
+  and aliases and creates the note if it doesn't exist.
 - **Sync**: commit, fetch, merge, push over HTTPS with a personal access token (no SSH).
   Two devices editing the same handwritten note are merged stroke by stroke; the same text note
   keeps your version and saves the other as a "conflict" copy.

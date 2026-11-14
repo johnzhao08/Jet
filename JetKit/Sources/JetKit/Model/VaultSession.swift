@@ -69,12 +69,18 @@ public final class VaultSession {
 
     /// Lowercased note title -> relative path.
     public private(set) var notesByTitle: [String: String] = [:]
-    /// Lowercased note title -> paths of notes that link to it.
-    public private(set) var backlinks: [String: [String]] = [:]
+    /// Links, tags and aliases across the vault's Markdown notes.
+    public private(set) var index = LinkIndex()
+    /// Bumped each time `index` is rebuilt.
+    public private(set) var indexVersion = 0
+    /// The sidebar's search field. Tapping a `#tag` in a note fills it with that tag.
+    public var sidebarQuery = ""
 
     @ObservationIgnored private var flushHandlers: [UUID: () -> Void] = [:]
     @ObservationIgnored private var lastLocalWrite = Date.distantPast
     @ObservationIgnored private let defaults = UserDefaults.standard
+    @ObservationIgnored private var indexTask: Task<Void, Never>?
+    @ObservationIgnored private var indexGeneration = 0
 
     private func key(_ name: String) -> String { "vault.\(ref.id.uuidString).\(name)" }
 
@@ -144,19 +150,26 @@ public final class VaultSession {
             titles[note.title.lowercased()] = note.path
         }
         notesByTitle = titles
+        rebuildIndex()
+    }
 
+    /// Re-reads every Markdown note for links and tags, after `delay` (later calls replace earlier ones).
+    public func rebuildIndex(after delay: Duration = .zero) {
+        indexTask?.cancel()
+        indexGeneration += 1
+        let generation = indexGeneration
         let root = root
+        let titles = notesByTitle
         let markdown = allNotes.filter { $0.fileExtension != "ink" }.map(\.path)
-        Task.detached(priority: .utility) {
-            var links: [String: [String]] = [:]
-            for path in markdown {
-                guard let text = try? String(contentsOf: root.appendingPathComponent(path), encoding: .utf8) else { continue }
-                for target in Set(Wikilink.targets(in: text)) {
-                    links[target.lowercased(), default: []].append(path)
-                }
-            }
-            let result = links
-            await MainActor.run { self.backlinks = result }
+        indexTask = Task {
+            if delay > .zero { try? await Task.sleep(for: delay) }
+            guard !Task.isCancelled else { return }
+            let built = await Task.detached(priority: .utility) {
+                LinkIndex.build(root: root, markdown: markdown, titles: titles)
+            }.value
+            guard generation == indexGeneration else { return }
+            index = built
+            indexVersion += 1
         }
     }
 
@@ -225,14 +238,19 @@ public final class VaultSession {
         refreshTree()
     }
 
-    // MARK: Links & search
+    // MARK: Links & tags
+
+    /// The note a link target names: its title, or one of its `aliases`.
+    public func path(forTitle title: String) -> String? {
+        notesByTitle[title.lowercased()] ?? index.aliases[title.lowercased()]
+    }
 
     /// Opens the note a `[[wikilink]]` points at, creating it next to the current note if it does not exist.
     public func openLink(_ target: String) {
         let name = target.split(separator: "#").first.map(String.init)?.trimmingCharacters(in: .whitespaces) ?? target
         let bare = Self.noteExtensions.contains((name as NSString).pathExtension.lowercased())
             ? (name as NSString).deletingPathExtension : name
-        if let path = notesByTitle[(bare as NSString).lastPathComponent.lowercased()] {
+        if let path = path(forTitle: (bare as NSString).lastPathComponent) {
             selection = path
         } else if !bare.isEmpty {
             createNote(kind: .markdown, named: (bare as NSString).lastPathComponent)
@@ -244,14 +262,119 @@ public final class VaultSession {
         let name = (target as NSString).lastPathComponent
         let ext = (name as NSString).pathExtension.lowercased()
         if Self.noteExtensions.contains(ext) || ext.isEmpty {
-            return notesByTitle[((name as NSString).deletingPathExtension).lowercased()]
+            return path(forTitle: (name as NSString).deletingPathExtension)
         }
         return Self.flatten(tree).first { $0.fileName.lowercased() == name.lowercased() }?.path
     }
 
+    /// Notes with this tag or one nested under it (`#project` also finds `#project/jet`).
+    public func notes(taggedWith tag: String) -> [String] {
+        let tag = String(tag.drop { $0 == "#" }).lowercased()
+        guard !tag.isEmpty else { return [] }
+        var seen = Set<String>()
+        return index.tags
+            .filter { $0.key == tag || $0.key.hasPrefix(tag + "/") }
+            .flatMap(\.value)
+            .filter { seen.insert($0).inserted }
+            .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    }
+
+    /// Every tag in the vault with how many notes use it, alphabetically.
+    public var allTags: [(name: String, count: Int)] {
+        index.tags
+            .map { (name: index.tagNames[$0.key] ?? $0.key, count: $0.value.count) }
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    /// Notes that mention this note's title or an alias as plain text, without linking to it.
+    public func unlinkedMentions(of path: String) async -> [SearchHit] {
+        let title = ((path as NSString).lastPathComponent as NSString).deletingPathExtension
+        // Longest first, so "Jet app" wins over "Jet" when both would match.
+        let names = ([title] + (index.noteAliases[path] ?? [])).sorted { $0.count > $1.count }
+        let linked = Set(index.backlinks[path] ?? [])
+        let candidates = allNotes.filter { $0.fileExtension != "ink" && $0.path != path && !linked.contains($0.path) }
+        let root = root
+        return await Task.detached(priority: .utility) {
+            var hits: [SearchHit] = []
+            for note in candidates {
+                if Task.isCancelled { return [] }
+                guard let text = try? String(contentsOf: root.appendingPathComponent(note.path), encoding: .utf8) else { continue }
+                for name in names {
+                    guard let range = NoteSyntax.unlinkedMentionRanges(of: name, in: text).first else { continue }
+                    let line = (text as NSString).lineRange(for: range)
+                    let snippet = (text as NSString).substring(with: line).trimmingCharacters(in: .whitespacesAndNewlines)
+                    hits.append(SearchHit(path: note.path, snippet: snippet))
+                    break
+                }
+            }
+            return hits.sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
+        }.value
+    }
+
+    /// Turns the first plain-text mention of `target`'s title (or an alias) in `source` into a link.
+    public func linkMention(in source: String, to target: String) {
+        flushEditors()
+        let title = ((target as NSString).lastPathComponent as NSString).deletingPathExtension
+        let url = url(for: source)
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return }
+        for name in ([title] + (index.noteAliases[target] ?? [])).sorted(by: { $0.count > $1.count }) {
+            if let linked = NoteSyntax.linkingFirstMention(of: name, in: text) {
+                guard (try? linked.write(to: url, atomically: true, encoding: .utf8)) != nil else { return }
+                didWriteFile()
+                contentVersion += 1
+                rebuildIndex()
+                return
+            }
+        }
+    }
+
+    // MARK: Daily notes
+
+    public nonisolated static let dailyFolder = "Daily"
+    public nonisolated static let dailyTemplate = "Templates/Daily.md"
+
+    /// Opens the note for `date` in `Daily/`, creating it (from `Templates/Daily.md` if there is one).
+    public func openDailyNote(for date: Date = .now) {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
+        let name = formatter.string(from: date)
+        let path = "\(Self.dailyFolder)/\(name).md"
+        if !exists(path) {
+            var text = (try? String(contentsOf: url(for: Self.dailyTemplate), encoding: .utf8)) ?? ""
+            text = text.replacingOccurrences(of: "{{date}}", with: name)
+                .replacingOccurrences(of: "{{title}}", with: name)
+                .replacingOccurrences(of: "{{weekday}}", with: date.formatted(.dateTime.weekday(.wide)))
+            do {
+                try FileManager.default.createDirectory(at: url(for: Self.dailyFolder), withIntermediateDirectories: true)
+                try text.write(to: url(for: path), atomically: true, encoding: .utf8)
+            } catch { return }
+            didWriteFile()
+            refreshTree()
+        }
+        selection = path
+    }
+
+    /// The day a daily note is for, if `path` is one.
+    public nonisolated static func dailyDate(of path: String) -> Date? {
+        guard (path as NSString).deletingLastPathComponent == dailyFolder else { return nil }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.date(from: ((path as NSString).lastPathComponent as NSString).deletingPathExtension)
+    }
+
+    // MARK: Search
+
+    /// Full-text search of note titles and Markdown. A query starting with `#` lists notes with that tag.
     public func search(_ query: String) async -> [SearchHit] {
         let needle = query.trimmingCharacters(in: .whitespaces)
         guard !needle.isEmpty else { return [] }
+        if needle.hasPrefix("#"), !needle.contains(" ") {
+            return notes(taggedWith: needle).map { path in
+                SearchHit(path: path, snippet: (index.noteTags[path] ?? []).map { "#" + $0 }.joined(separator: " "))
+            }
+        }
         let notes = allNotes
         let root = root
         return await Task.detached(priority: .userInitiated) {
@@ -293,6 +416,7 @@ public final class VaultSession {
     public func didWriteFile() {
         lastLocalWrite = Date()
         if pendingChanges == 0 { pendingChanges = 1 }
+        rebuildIndex(after: .seconds(1))
     }
 
     // MARK: Sync
@@ -356,18 +480,6 @@ public final class VaultSession {
             if (pendingChanges > 0 && editsSettled) || (stale && syncState == .idle) {
                 await sync(author: author())
             }
-        }
-    }
-}
-
-enum Wikilink {
-    /// Targets of every `[[target]]`, `[[target|alias]]` and `[[target#heading]]` in the text.
-    static func targets(in text: String) -> [String] {
-        text.matches(of: #/\[\[([^\]\|#]+)[^\]]*\]\]/#).map {
-            let target = String($0.1).trimmingCharacters(in: .whitespaces)
-            let name = (target as NSString).lastPathComponent
-            return VaultSession.noteExtensions.contains((name as NSString).pathExtension.lowercased())
-                ? (name as NSString).deletingPathExtension : name
         }
     }
 }

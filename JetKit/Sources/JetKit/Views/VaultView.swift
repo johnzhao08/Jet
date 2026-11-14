@@ -11,12 +11,15 @@ struct VaultView: View {
 
     @State private var showSyncSettings = false
     @State private var showQuickOpen = false
+    @State private var showGraph = false
+    @State private var columns = NavigationSplitViewVisibility.automatic
 
     private var author: GitAuthor { GitAuthor(name: app.authorName, email: app.authorEmail) }
 
     var body: some View {
-        NavigationSplitView {
-            SidebarView(session: session, showSyncSettings: $showSyncSettings, showQuickOpen: $showQuickOpen)
+        NavigationSplitView(columnVisibility: $columns) {
+            SidebarView(session: session, showSyncSettings: $showSyncSettings,
+                        showQuickOpen: $showQuickOpen, showGraph: $showGraph)
                 .navigationSplitViewColumnWidth(min: 220, ideal: 270, max: 400)
         } detail: {
             if let path = session.selection, !session.isDirectory(path) {
@@ -35,6 +38,11 @@ struct VaultView: View {
         }
         .sheet(isPresented: $showSyncSettings) { SyncSettingsView(session: session) }
         .sheet(isPresented: $showQuickOpen) { QuickOpenView(session: session) }
+        .sheet(isPresented: $showGraph) { GraphView(session: session) }
+        // A tapped #tag fills the sidebar search, so make sure the sidebar is showing.
+        .onChange(of: session.sidebarQuery) { _, query in
+            if !query.isEmpty, columns != .all { columns = .all }
+        }
         .task { await session.autoSyncLoop { GitAuthor(name: app.authorName, email: app.authorEmail) } }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
@@ -75,8 +83,8 @@ private struct SidebarView: View {
     @Bindable var session: VaultSession
     @Binding var showSyncSettings: Bool
     @Binding var showQuickOpen: Bool
+    @Binding var showGraph: Bool
 
-    @State private var query = ""
     @State private var hits: [SearchHit] = []
     @State private var renaming: FileNode?
     @State private var renameText = ""
@@ -84,10 +92,28 @@ private struct SidebarView: View {
 
     var body: some View {
         List(selection: $session.selection) {
-            if query.trimmingCharacters(in: .whitespaces).isEmpty {
-                OutlineGroup(session.tree, children: \.children) { node in
-                    FileRow(node: node)
-                        .contextMenu { menu(for: node) }
+            if session.sidebarQuery.trimmingCharacters(in: .whitespaces).isEmpty {
+                Section("Files") {
+                    OutlineGroup(session.tree, children: \.children) { node in
+                        FileRow(node: node)
+                            .contextMenu { menu(for: node) }
+                    }
+                }
+                let tags = session.allTags
+                if !tags.isEmpty {
+                    Section("Tags") {
+                        ForEach(tags, id: \.name) { tag in
+                            Button { session.sidebarQuery = "#" + tag.name } label: {
+                                HStack {
+                                    Label(tag.name, systemImage: "number")
+                                    Spacer()
+                                    Text("\(tag.count)").foregroundStyle(.secondary).monospacedDigit()
+                                }
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
                 }
             } else if hits.isEmpty {
                 Text("No matches").foregroundStyle(.secondary)
@@ -104,11 +130,11 @@ private struct SidebarView: View {
                 }
             }
         }
-        .searchable(text: $query, placement: .sidebar, prompt: "Search notes")
-        .task(id: query) {
+        .searchable(text: $session.sidebarQuery, placement: .sidebar, prompt: "Search notes or #tags")
+        .task(id: "\(session.sidebarQuery)|\(session.indexVersion)") {
             try? await Task.sleep(for: .milliseconds(200))
             guard !Task.isCancelled else { return }
-            hits = await session.search(query)
+            hits = await session.search(session.sidebarQuery)
         }
         .navigationTitle(session.ref.name)
         .toolbar {
@@ -135,6 +161,18 @@ private struct SidebarView: View {
                     Label("Quick open", systemImage: "magnifyingglass")
                 }
                 .keyboardShortcut("o", modifiers: .command)
+
+                Button { session.openDailyNote() } label: {
+                    Label("Today's note", systemImage: "calendar")
+                }
+                .keyboardShortcut("d", modifiers: [.command, .shift])
+                .help("Open today's daily note")
+
+                Button { showGraph = true } label: {
+                    Label("Graph", systemImage: "point.3.connected.trianglepath.dotted")
+                }
+                .keyboardShortcut("g", modifiers: [.command, .shift])
+                .help("Graph of linked notes")
             }
         }
         // On iPad the floating Pencil tool picker sits along the bottom edge, so sync lives at the top there.

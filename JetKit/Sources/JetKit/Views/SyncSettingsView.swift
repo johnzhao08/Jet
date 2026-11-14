@@ -97,24 +97,66 @@ struct QuickOpenView: View {
     @State private var query = ""
     @FocusState private var focused: Bool
 
+    private var needle: String { query.trimmingCharacters(in: .whitespaces) }
+
+    /// Notes ranked by how well their title (or an alias, or the folder path) matches; letters in order also count.
     private var matches: [FileNode] {
-        let needle = query.trimmingCharacters(in: .whitespaces)
         let notes = session.allNotes
         guard !needle.isEmpty else { return Array(notes.prefix(50)) }
-        return Array(notes.filter { $0.path.localizedCaseInsensitiveContains(needle) }.prefix(50))
+        let scored = notes.compactMap { node -> (FileNode, Int)? in
+            let names = [node.title] + (session.index.noteAliases[node.path] ?? [])
+            let score = names.map { Self.score(needle, in: $0) }.max() ?? 0
+            let best = max(score, Self.score(needle, in: node.path) - 1)
+            return best > 0 ? (node, best) : nil
+        }
+        return scored
+            .sorted { $0.1 != $1.1 ? $0.1 > $1.1 : $0.0.title.count < $1.0.title.count }
+            .prefix(50).map(\.0)
+    }
+
+    static func score(_ needle: String, in name: String) -> Int {
+        let needle = needle.lowercased(), name = name.lowercased()
+        if name == needle { return 5 }
+        if name.hasPrefix(needle) { return 4 }
+        if name.contains(needle) { return 3 }
+        var rest = Substring(name)
+        for character in needle {
+            guard let found = rest.firstIndex(of: character) else { return 0 }
+            rest = rest[rest.index(after: found)...]
+        }
+        return 2
+    }
+
+    /// Offer to create the note when nothing has exactly this name, like following a new `[[link]]`.
+    private var canCreate: Bool {
+        !needle.isEmpty && session.path(forTitle: needle) == nil
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            TextField("Open note…", text: $query)
+            TextField("Open or create a note…", text: $query)
                 .textFieldStyle(.plain)
                 .font(.title3)
                 .padding(14)
                 .focused($focused)
                 .onSubmit {
-                    if let first = matches.first { open(first) }
+                    if let first = matches.first { open(first) } else if canCreate { create() }
                 }
             Divider()
+            if canCreate {
+                Button(action: create) {
+                    Label("Create “\(needle)”", systemImage: "plus.circle")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.accentColor)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .keyboardShortcut(.return, modifiers: .shift)
+                .help("Shift-Return")
+                Divider()
+            }
             List(matches) { node in
                 Button { open(node) } label: {
                     VStack(alignment: .leading, spacing: 1) {
@@ -137,6 +179,11 @@ struct QuickOpenView: View {
 
     private func open(_ node: FileNode) {
         session.selection = node.path
+        dismiss()
+    }
+
+    private func create() {
+        session.createNote(kind: .markdown, named: needle.replacingOccurrences(of: "/", with: "-"))
         dismiss()
     }
 }
