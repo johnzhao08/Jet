@@ -18,21 +18,35 @@ struct InkCanvasRepresentable: UIViewControllerRepresentable {
     let generation: Int
     let paper: PaperStyle
     let showsToolPicker: Bool
+    let mode: InkMode
 
     func makeUIViewController(context: Context) -> InkCanvasController {
         InkCanvasController(model: model)
     }
 
     func updateUIViewController(_ controller: InkCanvasController, context: Context) {
-        controller.apply(generation: generation, paper: paper, showsToolPicker: showsToolPicker)
+        controller.apply(generation: generation, paper: paper, showsToolPicker: showsToolPicker, mode: mode)
     }
 }
 
-final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPencilInteractionDelegate {
+final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPencilInteractionDelegate,
+    PKToolPickerObserver, UIGestureRecognizerDelegate {
     private let model: InkNoteModel
     private let canvas = PKCanvasView()
     private let paperView = PaperLinesView()
     private let toolPicker = PKToolPicker()
+    private let spaceGuide = InsertSpaceGuideView()
+    private lazy var insertSpacePan = UIPanGestureRecognizer(target: self, action: #selector(handleInsertSpace(_:)))
+
+    private var mode = InkMode.draw
+    /// The tool to restore when leaving lasso or insert-space mode.
+    private var drawingTool: PKTool = PKInkingTool(.pen, color: .label, width: 3)
+    /// The drawing as it was when an insert-space drag began, the line it started at (page points),
+    /// and how far the strokes below may move up before they would overlap the strokes above.
+    private var spaceDrag: (original: PKDrawing, lineY: CGFloat, maxUp: CGFloat)?
+    /// Where the finger or Pencil first touched, in canvas coordinates. A pan is only recognised after
+    /// some movement, so measuring from the touch-down keeps the line where the drag really started.
+    private var spaceTouchStart: CGPoint?
 
     private var appliedGeneration = -1
     private var paper = PaperStyle.lined
@@ -75,6 +89,18 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
 
         toolPicker.stateAutosaveName = "jet.ink.toolpicker"
         toolPicker.addObserver(canvas)
+        toolPicker.addObserver(self)
+
+        spaceGuide.frame = view.bounds
+        spaceGuide.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        spaceGuide.isUserInteractionEnabled = false
+        view.addSubview(spaceGuide)
+
+        // Insert space: one finger or the Pencil drags the line; two fingers still scroll.
+        insertSpacePan.maximumNumberOfTouches = 1
+        insertSpacePan.isEnabled = false
+        insertSpacePan.delegate = self
+        canvas.addGestureRecognizer(insertSpacePan)
 
         view.addInteraction(UIPencilInteraction(delegate: self))
 
@@ -114,7 +140,7 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
 
     // MARK: State from SwiftUI
 
-    func apply(generation: Int, paper: PaperStyle, showsToolPicker: Bool) {
+    func apply(generation: Int, paper: PaperStyle, showsToolPicker: Bool, mode: InkMode) {
         loadViewIfNeeded()
         if generation != appliedGeneration {
             appliedGeneration = generation
@@ -130,6 +156,120 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
             pickerWanted = showsToolPicker
             if view.window != nil { showToolPicker(showsToolPicker) }
         }
+        if mode != self.mode { setMode(mode) }
+    }
+
+    // MARK: Lasso and insert space
+
+    private func setMode(_ newMode: InkMode) {
+        if mode == .draw { drawingTool = canvas.tool }
+        mode = newMode
+        switch newMode {
+        case .draw:
+            canvas.tool = drawingTool
+        case .lasso:
+            canvas.tool = PKLassoTool()
+        case .insertSpace:
+            canvas.tool = drawingTool
+        }
+        let inserting = newMode == .insertSpace
+        insertSpacePan.isEnabled = inserting
+        canvas.drawingGestureRecognizer.isEnabled = !inserting
+        // While inserting space, a single finger moves the line, so scrolling takes two.
+        canvas.panGestureRecognizer.minimumNumberOfTouches = inserting ? 2 : 1
+        spaceGuide.showsHint = inserting
+    }
+
+    /// Picking a tool in the tool picker goes back to writing.
+    func toolPickerSelectedToolItemDidChange(_ toolPicker: PKToolPicker) {
+        leaveSpecialMode()
+    }
+
+    func toolPickerSelectedToolDidChange(_ toolPicker: PKToolPicker) {
+        leaveSpecialMode()
+    }
+
+    private func leaveSpecialMode() {
+        guard mode != .draw else { return }
+        mode = .draw
+        insertSpacePan.isEnabled = false
+        canvas.drawingGestureRecognizer.isEnabled = true
+        canvas.panGestureRecognizer.minimumNumberOfTouches = 1
+        spaceGuide.showsHint = false
+        // The canvas already follows the picker's new tool.
+        DispatchQueue.main.async { self.model.mode = .draw }
+    }
+
+    @objc private func handleInsertSpace(_ pan: UIPanGestureRecognizer) {
+        let zoom = max(canvas.zoomScale, 0.01)
+        switch pan.state {
+        case .began:
+            let start = spaceTouchStart?.y ?? (pan.location(in: canvas).y - pan.translation(in: canvas).y)
+            let lineY = start / zoom
+            let drawing = canvas.drawing
+            let below = drawing.strokes.filter { $0.renderBounds.minY >= lineY }
+            let above = drawing.strokes.filter { $0.renderBounds.minY < lineY }
+            let belowTop = below.map(\.renderBounds.minY).min() ?? lineY
+            let aboveBottom = above.map(\.renderBounds.maxY).max() ?? 0
+            let maxUp = max(0, belowTop - max(aboveBottom, 0) - 4)
+            spaceDrag = (drawing, lineY, maxUp)
+            spaceGuide.show(lineAt: start - canvas.contentOffset.y, delta: 0)
+        case .changed:
+            guard let drag = spaceDrag else { return }
+            let delta = max(pan.location(in: canvas).y / zoom - drag.lineY, -drag.maxUp)
+            canvas.drawing = Self.shifting(drag.original, below: drag.lineY, by: delta)
+            spaceGuide.show(lineAt: drag.lineY * zoom - canvas.contentOffset.y, delta: delta * zoom)
+        case .ended, .cancelled, .failed:
+            spaceGuide.hide()
+            guard let drag = spaceDrag else { return }
+            spaceDrag = nil
+            let delta = max(pan.location(in: canvas).y / zoom - drag.lineY, -drag.maxUp)
+            guard pan.state == .ended, abs(delta) >= 1 else {
+                canvas.drawing = drag.original
+                return
+            }
+            let result = Self.shifting(drag.original, below: drag.lineY, by: delta)
+            canvas.drawing = result
+            registerUndo(from: drag.original, to: result, name: delta > 0 ? "Insert Space" : "Remove Space")
+            updateContentSize()
+        default:
+            break
+        }
+    }
+
+    /// Every stroke that starts below `lineY` moved down by `delta` page points (up if negative).
+    static func shifting(_ drawing: PKDrawing, below lineY: CGFloat, by delta: CGFloat) -> PKDrawing {
+        guard delta != 0 else { return drawing }
+        let move = CGAffineTransform(translationX: 0, y: delta)
+        return PKDrawing(strokes: drawing.strokes.map { stroke in
+            guard stroke.renderBounds.minY >= lineY else { return stroke }
+            var moved = stroke
+            moved.transform = stroke.transform.concatenating(move)
+            return moved
+        })
+    }
+
+    private func registerUndo(from old: PKDrawing, to new: PKDrawing, name: String) {
+        guard let undoManager = canvas.undoManager else { return }
+        undoManager.registerUndo(withTarget: self) { controller in
+            controller.canvas.drawing = old
+            controller.registerUndo(from: new, to: old, name: name)
+        }
+        undoManager.setActionName(name)
+    }
+
+    // MARK: Gesture delegate
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        if gestureRecognizer === insertSpacePan, spaceDrag == nil {
+            spaceTouchStart = touch.location(in: canvas)
+        }
+        return true
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                           shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+        true
     }
 
     private func showToolPicker(_ visible: Bool) {
@@ -214,6 +354,56 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
         let current = canvas.tool
         canvas.tool = alternateTool
         alternateTool = current
+    }
+}
+
+/// The insert-space line and its hint, drawn over the canvas.
+final class InsertSpaceGuideView: UIView {
+    private let line = UIView()
+    private let band = UIView()
+    private let hint = UILabel()
+
+    var showsHint = false {
+        didSet { hint.isHidden = !showsHint }
+    }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        band.backgroundColor = UIColor.tintColor.withAlphaComponent(0.08)
+        line.backgroundColor = .tintColor
+        hint.text = "Drag down to insert space, up to remove it"
+        hint.font = .preferredFont(forTextStyle: .footnote)
+        hint.textColor = .secondaryLabel
+        hint.textAlignment = .center
+        hint.backgroundColor = UIColor.secondarySystemBackground.withAlphaComponent(0.92)
+        hint.layer.cornerRadius = 10
+        hint.layer.masksToBounds = true
+        hint.isHidden = true
+        [band, line, hint].forEach(addSubview)
+        hide()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let size = hint.sizeThatFits(CGSize(width: bounds.width - 40, height: 40))
+        let top = safeAreaInsets.top + 12
+        hint.frame = CGRect(x: (bounds.width - size.width - 24) / 2, y: top, width: size.width + 24, height: size.height + 12)
+    }
+
+    /// `lineY` is where the drag started, `delta` how far it has moved, both in view points.
+    func show(lineAt lineY: CGFloat, delta: CGFloat) {
+        line.isHidden = false
+        band.isHidden = delta == 0
+        line.frame = CGRect(x: 0, y: lineY + max(delta, 0) - 1, width: bounds.width, height: 2)
+        band.frame = CGRect(x: 0, y: min(lineY, lineY + delta), width: bounds.width, height: abs(delta))
+    }
+
+    func hide() {
+        line.isHidden = true
+        band.isHidden = true
     }
 }
 
