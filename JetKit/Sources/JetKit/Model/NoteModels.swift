@@ -2,6 +2,16 @@ import Foundation
 import Observation
 import PencilKit
 
+/// What a finger or the Pencil does on a handwritten page, besides writing with the picked tool.
+public enum InkMode: Equatable, Sendable {
+    /// Write, erase, etc. with the tool chosen in the tool picker.
+    case draw
+    /// Lasso-select strokes, then drag, copy or delete them.
+    case lasso
+    /// Drag down from a point to push everything below it down (or up to close a gap), like OneNote.
+    case insertSpace
+}
+
 /// An open handwritten note. Saves are debounced; identical content is never rewritten,
 /// so git only sees a change when a stroke actually changed.
 @MainActor
@@ -18,6 +28,7 @@ public final class InkNoteModel {
     /// Bumped when the drawing was replaced from disk (first load, or after a sync).
     public var generation = 0
     public var showsToolPicker = true
+    public var mode: InkMode = .draw
 
     @ObservationIgnored public private(set) var drawing = PKDrawing()
     @ObservationIgnored public var undo: () -> Void = {}
