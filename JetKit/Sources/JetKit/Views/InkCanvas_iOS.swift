@@ -102,6 +102,20 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
         insertSpacePan.delegate = self
         canvas.addGestureRecognizer(insertSpacePan)
 
+        // Two-finger double tap undoes, three-finger double tap redoes.
+        let undoTap = UITapGestureRecognizer(target: self, action: #selector(handleUndoTap))
+        undoTap.numberOfTouchesRequired = 2
+        undoTap.numberOfTapsRequired = 2
+        undoTap.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+        undoTap.delegate = self
+        canvas.addGestureRecognizer(undoTap)
+        let redoTap = UITapGestureRecognizer(target: self, action: #selector(handleRedoTap))
+        redoTap.numberOfTouchesRequired = 3
+        redoTap.numberOfTapsRequired = 2
+        redoTap.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+        redoTap.delegate = self
+        canvas.addGestureRecognizer(redoTap)
+
         view.addInteraction(UIPencilInteraction(delegate: self))
 
         model.undo = { [weak self] in self?.canvas.undoManager?.undo() }
@@ -258,7 +272,15 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
         undoManager.setActionName(name)
     }
 
-    // MARK: Gesture delegate
+    // MARK: Multi-finger taps
+
+    @objc private func handleUndoTap() {
+        canvas.undoManager?.undo()
+    }
+
+    @objc private func handleRedoTap() {
+        canvas.undoManager?.redo()
+    }
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
         if gestureRecognizer === insertSpacePan, spaceDrag == nil {
@@ -269,6 +291,7 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
                            shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+        // Let the taps be seen alongside scrolling and zooming, which also start with two fingers.
         true
     }
 
