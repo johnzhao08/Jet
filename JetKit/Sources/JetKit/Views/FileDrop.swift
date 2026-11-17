@@ -62,25 +62,48 @@ public enum FileDrop {
         case nothing
     }
 
+    /// A file another app promises to write once the drop lands (browsers drag web images this way).
+    static let promiseTypes: Set<String> = {
+        var types: Set<String> = ["com.apple.pasteboard.promised-file-url", "Apple files promise pasteboard type"]
+        let legacy = UTTagClass(rawValue: "com.apple.nspboard-type")
+        if let dynamic = UTType(tag: "Apple files promise pasteboard type", tagClass: legacy, conformingTo: nil) {
+            types.insert(dynamic.identifier)
+        }
+        return types
+    }()
+
+    /// Whether a dragged type is a file's content, as opposed to text, a link or app-private data.
+    static func isFileContent(_ identifier: String) -> Bool {
+        guard let type = UTType(identifier), !type.isDynamic else { return false }
+        return !type.conforms(to: .text) && !type.conforms(to: .url)
+            && (type.conforms(to: .data) || type.conforms(to: .content))
+    }
+
     /// Jet's own rows are recognised by their type before anything else, so a row being moved is
     /// never mistaken for a file to import. Dragged text and links aren't files.
     public static func classify(_ providers: [NSItemProvider]) -> Contents {
-        if providers.contains(where: { $0.hasItemConformingToTypeIdentifier(UTType.jetVaultItem.identifier) }) {
-            return .vaultItems
-        }
-        let files = providers.contains { provider in
-            provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)
-                || provider.registeredTypeIdentifiers.contains { identifier in
-                    guard let type = UTType(identifier) else { return false }
-                    return !type.conforms(to: .text) && !type.conforms(to: .url)
-                        && (type.conforms(to: .data) || type.conforms(to: .content))
-                }
+        classify(types: providers.flatMap(\.registeredTypeIdentifiers))
+    }
+
+    /// The same, from type identifiers alone. During a drag, check this rather than asking for item
+    /// providers: on the Mac each request for a browser image's providers starts a thread that waits for
+    /// the browser to deliver the file, and asking on every mouse move used up every thread and froze Jet.
+    public static func classify(types: [String]) -> Contents {
+        if types.contains(UTType.jetVaultItem.identifier) { return .vaultItems }
+        let files = types.contains { identifier in
+            promiseTypes.contains(identifier)
+                || UTType(identifier)?.conforms(to: .fileURL) == true
+                || isFileContent(identifier)
         }
         return files ? .files : .nothing
     }
 
     public static func operation(for providers: [NSItemProvider], into folder: String?) -> DropOperation {
-        switch classify(providers) {
+        operation(for: classify(providers), into: folder)
+    }
+
+    public static func operation(for contents: Contents, into folder: String?) -> DropOperation {
+        switch contents {
         case .vaultItems: return folder == nil ? .forbidden : .move
         case .files: return .copy
         case .nothing: return .forbidden
@@ -104,12 +127,43 @@ public enum FileDrop {
     public static func fileURLs(in providers: [NSItemProvider]) async -> [URL] {
         var urls: [URL] = []
         for provider in providers {
+            #if os(macOS)
+            // A browser image carries its web address too, which isn't a file: read the image itself.
+            if !provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier),
+               let type = provider.registeredTypeIdentifiers.first(where: isFileContent) {
+                if let url = await copyOut(provider, type: type) { urls.append(url) }
+                continue
+            }
+            #endif
             let file: DroppedFile? = await withCheckedContinuation { continuation in
                 _ = provider.loadTransferable(type: DroppedFile.self) { continuation.resume(returning: try? $0.get()) }
             }
             if let url = file?.url, url.isFileURL { urls.append(url) }
         }
         return urls
+    }
+
+    /// Copies a provider's file out of the system's temporary drop location, which only lasts for the callback.
+    static func copyOut(_ provider: NSItemProvider, type: String) async -> URL? {
+        await withCheckedContinuation { continuation in
+            _ = provider.loadFileRepresentation(forTypeIdentifier: type) { file, _ in
+                guard let file else { return continuation.resume(returning: nil) }
+                let folder = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("JetDrops").appendingPathComponent(UUID().uuidString)
+                var name = provider.suggestedName.map { ($0 as NSString).lastPathComponent } ?? file.lastPathComponent
+                if (name as NSString).pathExtension.isEmpty, let ext = UTType(type)?.preferredFilenameExtension {
+                    name += "." + ext
+                }
+                let copy = folder.appendingPathComponent(name.isEmpty ? file.lastPathComponent : name)
+                do {
+                    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                    try FileManager.default.copyItem(at: file, to: copy)
+                    continuation.resume(returning: copy)
+                } catch {
+                    continuation.resume(returning: nil)
+                }
+            }
+        }
     }
 
     /// Handles a drop on the window (`folder` nil) or on a folder: rows move into the folder (rows
@@ -141,21 +195,33 @@ struct FileDropTarget: DropDelegate {
     let folder: String?
     @Binding var targeted: Bool
 
-    func validateDrop(info: DropInfo) -> Bool {
-        FileDrop.operation(for: info.itemProviders(for: FileDrop.acceptedTypes), into: folder) != .forbidden
+    /// Decided from the dragged types only; item providers are loaded once, on the drop.
+    private func operation(_ info: DropInfo) -> DropOperation {
+        FileDrop.operation(for: FileDrop.classify(types: info.draggedTypes), into: folder)
     }
+
+    func validateDrop(info: DropInfo) -> Bool { operation(info) != .forbidden }
 
     func dropEntered(info: DropInfo) { targeted = validateDrop(info: info) }
     func dropExited(info: DropInfo) { targeted = false }
 
-    func dropUpdated(info: DropInfo) -> DropProposal? {
-        DropProposal(operation: FileDrop.operation(for: info.itemProviders(for: FileDrop.acceptedTypes), into: folder))
-    }
+    func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: operation(info)) }
 
     func performDrop(info: DropInfo) -> Bool {
         targeted = false
         guard validateDrop(info: info) else { return false }
         return FileDrop.handle(info.itemProviders(for: FileDrop.acceptedTypes), app: app, into: folder)
+    }
+}
+
+extension DropInfo {
+    /// The dragged types, read without loading anything.
+    var draggedTypes: [String] {
+        #if os(macOS)
+        NSPasteboard(name: .drag).types?.map(\.rawValue) ?? []
+        #else
+        itemProviders(for: FileDrop.acceptedTypes).flatMap(\.registeredTypeIdentifiers)
+        #endif
     }
 }
 

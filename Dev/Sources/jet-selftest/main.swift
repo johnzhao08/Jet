@@ -2,6 +2,7 @@ import Foundation
 import PencilKit
 import AppKit
 import ImageIO
+import UniformTypeIdentifiers
 import CoreText
 import JetKit
 
@@ -504,6 +505,36 @@ do {
     semaphore.wait()
     expect(paths == ["Welcome.md"], "a dragged row decodes to its path")
     expect(urls.map(\.standardizedFileURL.path) == [file.standardizedFileURL.path], "a Finder drop gives the original file")
+
+    // A browser image drag, as its pasteboard types (checked on every mouse move, without loading anything).
+    let browserImage = ["public.url", "dyn.agu8yc6durvwwaznwmuuha2pxsvw0e55bsmwca7d3sbwu", "public.utf8-plain-text",
+                        "public.html", "com.apple.pasteboard.promised-file-url", "com.apple.pasteboard.promised-file-content-type"]
+    expect(FileDrop.classify(types: browserImage) == .files, "a browser image drag is a file")
+    expect(FileDrop.classify(types: ["public.jpeg", "public.url"]) == .files, "image data next to its web address is a file")
+    expect(FileDrop.classify(types: ["public.utf8-plain-text", "dyn.agu8yc6durvwwaznwmuuha2pxsvw0e55bsmwca7d3sbwu",
+                                     "public.url", "public.html"]) == .nothing, "a dragged link or text, legacy types included, isn't a file")
+    expect(FileDrop.classify(types: ["com.johnzhao.jet.vault-item", "public.file-url"]) == .vaultItems, "rows still win by type")
+    expect(FileDrop.operation(for: FileDrop.classify(types: browserImage), into: nil) == .copy, "the window accepts a browser image")
+
+    // Dropped: the image is read out of the provider, not its web address.
+    let jpeg = work.appendingPathComponent("web-image-source")
+    try Data([0xFF, 0xD8, 0xFF, 0xE0, 1, 2, 3]).write(to: jpeg)
+    let web = NSItemProvider()
+    web.registerObject(URL(string: "https://example.com/images/cat")! as NSURL, visibility: .all)
+    web.registerFileRepresentation(forTypeIdentifier: UTType.jpeg.identifier, visibility: .all) { done in
+        done(jpeg, false, nil)
+        return nil
+    }
+    web.suggestedName = "cat"
+    var webURLs: [URL] = []
+    Task.detached {
+        webURLs = await FileDrop.fileURLs(in: [web])
+        semaphore.signal()
+    }
+    semaphore.wait()
+    expect(webURLs.count == 1 && webURLs.first?.lastPathComponent == "cat.jpeg"
+           && (try? Data(contentsOf: webURLs[0])) == (try? Data(contentsOf: jpeg)),
+           "a dropped web image arrives as a .jpeg file with its bytes")
 
     let vault = work.appendingPathComponent("guarded")
     let outside = work.appendingPathComponent("guarded-outside")
