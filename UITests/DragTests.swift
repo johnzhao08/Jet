@@ -87,8 +87,10 @@ final class DragTests: XCTestCase {
         XCTAssertTrue(row("Folder/Root.md").waitForExistence(timeout: 5))
         app.terminate()
         launch()
-        tapRow("Folder")
+        // The folder stays open (and selected) across launches; open it only if it isn't.
+        if !row("Folder/Root.md").waitForExistence(timeout: 5) { tapRow("Folder") }
         XCTAssertTrue(row("Folder/Root.md").waitForExistence(timeout: 10), "The move survives a relaunch")
+        XCTAssertFalse(row("Root.md").exists)
     }
 
     func testDragBetweenRowsReorders() {

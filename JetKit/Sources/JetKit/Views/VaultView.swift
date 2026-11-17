@@ -197,6 +197,8 @@ private struct SidebarView: View {
                 }
                 .contentShape(Rectangle())
                 .modifier(EndDrop(app: app, indicator: $dropIndicator))
+                .accessibilityElement()
+                .accessibilityLabel("End of the top level")
                 .accessibilityIdentifier("vault-end-drop")
             let tags = session.allTags
             if !tags.isEmpty {
