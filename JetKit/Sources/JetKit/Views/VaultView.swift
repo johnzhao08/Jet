@@ -28,6 +28,15 @@ struct VaultView: View {
             if let path = session.selection, !session.isDirectory(path) {
                 NoteDetailView(session: session, path: path)
                     .id(path)
+            } else if let folder = session.selection {
+                ContentUnavailableView {
+                    Label((folder as NSString).lastPathComponent, systemImage: "folder.fill")
+                } description: {
+                    Text("You're working in “\(folder)”. New notes and folders go here.")
+                } actions: {
+                    Button("New handwritten note") { session.requestNewNote(kind: .ink) }
+                    Button("New text note") { session.requestNewNote(kind: .markdown) }
+                }
             } else {
                 ContentUnavailableView {
                     Label("No note open", systemImage: "note.text")
@@ -139,41 +148,70 @@ private struct SidebarView: View {
     @State private var newFolderParent: String?
     /// The "Import files" picker, and the folder picked files go into.
     @State private var importing = false
-    /// The folder a drag is hovering over ("" for the top level), to highlight it.
-    @State private var dropTarget: String?
+    /// Folders shown open in the sidebar (remembered per vault).
+    @State private var expanded: Set<String> = []
+    /// Where a drag over the sidebar would land, to draw it (Mac).
+    @State private var dropIndicator: DropIndicator?
     @State private var importFolder = ""
     @State private var newFolderName = ""
+
+    /// The tree as flat rows with their depth, following which folders are open.
+    private var visibleRows: [(node: FileNode, depth: Int)] {
+        var rows: [(FileNode, Int)] = []
+        func walk(_ nodes: [FileNode], depth: Int) {
+            for node in nodes {
+                rows.append((node, depth))
+                if node.isDirectory, expanded.contains(node.path) { walk(node.children ?? [], depth: depth + 1) }
+            }
+        }
+        walk(session.tree, depth: 0)
+        return rows
+    }
 
     @ViewBuilder
     private var rows: some View {
         if session.sidebarQuery.trimmingCharacters(in: .whitespaces).isEmpty {
-            Section {
-                OutlineGroup(session.tree, children: \.children) { node in
-                    FileRow(node: node, dropTarget: dropTarget == node.path)
-                        .contextMenu { menu(for: node) }
-                        .modifier(SidebarSelection(path: node.path, selection: $session.selection))
-                        .onDrag { VaultItem(path: node.path).itemProvider }
-                        .modifier(FolderDrop(folder: node.isDirectory ? node.path : nil, target: $dropTarget))
-                        .accessibilityIdentifier("vault-row-" + node.path)
-                }
-                #if os(iOS)
-                .disclosureGroupStyle(SidebarDisclosureStyle())
-                #endif
+            let rows = visibleRows
+            ForEach(Array(rows.enumerated()), id: \.element.node.path) { index, row in
+                TreeRow(node: row.node, depth: row.depth,
+                        isOpen: expanded.contains(row.node.path),
+                        isSelected: session.selection == row.node.path,
+                        isCurrentFolder: row.node.isDirectory && session.targetFolder == row.node.path,
+                        indicator: dropIndicator,
+                        toggle: { toggle(row.node.path) })
+                    .contentShape(Rectangle())
+                    .onTapGesture { open(row.node) }
+                    .contextMenu { menu(for: row.node) }
+                    .modifier(RowDrag(node: row.node, depth: row.depth, isOpen: expanded.contains(row.node.path),
+                                      nextSibling: nextSibling(of: row.node.path),
+                                      app: app, indicator: $dropIndicator))
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("vault-row-" + row.node.path)
+                    .accessibilityAddTraits(session.selection == row.node.path ? [.isButton, .isSelected] : .isButton)
             }
+            // The space below the list is the top level: drop there to move things out of folders.
+            Color.clear
+                .frame(height: 120)
+                .overlay(alignment: .top) {
+                    if dropIndicator == .line(folder: "", before: nil, depth: 0) { InsertionLine(depth: 0) }
+                }
+                .contentShape(Rectangle())
+                .modifier(EndDrop(app: app, indicator: $dropIndicator))
+                .accessibilityIdentifier("vault-end-drop")
             let tags = session.allTags
             if !tags.isEmpty {
-                Section("Tags") {
-                    ForEach(tags, id: \.name) { tag in
-                        Button { session.sidebarQuery = "#" + tag.name } label: {
-                            HStack {
-                                Label(tag.name, systemImage: "number")
-                                Spacer()
-                                Text("\(tag.count)").foregroundStyle(.secondary).monospacedDigit()
-                            }
-                            .contentShape(Rectangle())
+                Text("Tags").font(.caption).foregroundStyle(.secondary).padding(.top, 4)
+                ForEach(tags, id: \.name) { tag in
+                    Button { session.sidebarQuery = "#" + tag.name } label: {
+                        HStack {
+                            Label(tag.name, systemImage: "number")
+                            Spacer()
+                            Text("\(tag.count)").foregroundStyle(.secondary).monospacedDigit()
                         }
-                        .buttonStyle(.plain)
+                        .frame(minHeight: TreeRow.height)
+                        .contentShape(Rectangle())
                     }
+                    .buttonStyle(.plain)
                 }
             }
         } else if hits.isEmpty {
@@ -187,43 +225,143 @@ private struct SidebarView: View {
                         Text(hit.snippet).font(.caption).foregroundStyle(.secondary).lineLimit(2)
                     }
                 }
-                .modifier(SidebarSelection(path: hit.path, selection: $session.selection))
+                .padding(.vertical, 4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .background(session.selection == hit.path ? Color.accentColor.opacity(0.18) : .clear,
+                            in: RoundedRectangle(cornerRadius: 6))
+                .onTapGesture { session.selection = hit.path }
             }
         }
     }
 
-    @ViewBuilder
-    private var fileList: some View {
-        // Keep row drag and drop gestures outside List's platform-specific selection handling.
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 8) { rows }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
+    /// The row after `path` in its own folder (where "drop below this row" inserts), or nil at the end.
+    private func nextSibling(of path: String) -> String? {
+        let siblings = session.children(of: (path as NSString).deletingLastPathComponent).map(\.path)
+        guard let index = siblings.firstIndex(of: path), index + 1 < siblings.count else { return nil }
+        return siblings[index + 1]
+    }
+
+    /// A click on a folder opens it (and makes it the folder you're working in); a click on a
+    /// folder that's already current closes it again.
+    private func open(_ node: FileNode) {
+        if node.isDirectory {
+            if session.selection == node.path { toggle(node.path) } else {
+                session.selection = node.path
+                setOpen(node.path, true)
+            }
+        } else {
+            session.selection = node.path
         }
     }
 
-    var body: some View {
-        fileList
-        .safeAreaInset(edge: .top, spacing: 0) {
-            HStack {
-                Label("Files", systemImage: "folder")
+    private func toggle(_ folder: String) { setOpen(folder, !expanded.contains(folder)) }
+
+    private func setOpen(_ folder: String, _ open: Bool) {
+        if open { expanded.insert(folder) } else { expanded.remove(folder) }
+        UserDefaults.standard.set(Array(expanded), forKey: expandedKey)
+    }
+
+    private var expandedKey: String { "vault.\(session.ref.id.uuidString).expanded" }
+
+    /// Opens the folders above `path`, so the open note is always visible.
+    private func reveal(_ path: String?) {
+        guard let path else { return }
+        var folder = (path as NSString).deletingLastPathComponent
+        var changed = false
+        while !folder.isEmpty {
+            if expanded.insert(folder).inserted { changed = true }
+            folder = (folder as NSString).deletingLastPathComponent
+        }
+        if changed { UserDefaults.standard.set(Array(expanded), forKey: expandedKey) }
+    }
+
+    @ViewBuilder
+    private var fileList: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0) { rows }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+        }
+    }
+
+    /// Top of the sidebar: the folder you're working in (where new notes go), as a path you can
+    /// click back up, plus sorting and New Folder.
+    private var header: some View {
+        let parts = session.targetFolder.isEmpty ? [] : session.targetFolder.split(separator: "/").map(String.init)
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 10) {
+                Text("Files").font(.headline)
                     .accessibilityIdentifier("vault-root-drop")
                 Spacer()
+                Menu {
+                    Picker("Sort By", selection: $session.sortMode) {
+                        ForEach(SortMode.allCases) { mode in Text(mode.label).tag(mode) }
+                    }
+                    .pickerStyle(.inline)
+                    Menu("Clean Up By") {
+                        ForEach([SortMode.name, .modified, .kind]) { mode in
+                            Button(mode.label) { session.cleanUp(by: mode) }
+                        }
+                    }
+                } label: {
+                    Label("Sort", systemImage: "arrow.up.arrow.down")
+                        .labelStyle(.iconOnly)
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help("Sort files, or clean up their order")
+                .accessibilityIdentifier("sort-menu")
                 Button { askForFolder(in: session.targetFolder) } label: {
                     Label("New folder", systemImage: "folder.badge.plus")
                         .labelStyle(.iconOnly)
                 }
                 .buttonStyle(.borderless)
-                .help("New folder")
+                .help("New folder in \(parts.last ?? "the top level")")
             }
-            .padding(.horizontal, 16)
-            .frame(minHeight: 44)
-            .foregroundStyle(dropTarget == "" ? Color.accentColor : .secondary)
-            .background(dropTarget == "" ? Color.accentColor.opacity(0.15) : .clear)
-            .contentShape(Rectangle())
-            .accessibilityHint("Drop files or folders here to move them to the top level")
-            .modifier(FolderDrop(folder: "", target: $dropTarget))
+            // Where you are: new notes and folders go here.
+            HStack(spacing: 4) {
+                Button { session.selection = nil } label: {
+                    Image(systemName: "house")
+                }
+                .buttonStyle(.borderless)
+                .help("Top level")
+                .accessibilityLabel("Top level")
+                ForEach(parts.indices, id: \.self) { index in
+                    Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
+                    Button(parts[index]) {
+                        let folder = parts[...index].joined(separator: "/")
+                        session.selection = folder
+                        setOpen(folder, true)
+                    }
+                    .buttonStyle(.borderless)
+                    .fontWeight(index == parts.count - 1 ? .semibold : .regular)
+                    .lineLimit(1)
+                }
+                if parts.isEmpty { Text("Top level").fontWeight(.semibold) }
+                Spacer(minLength: 0)
+            }
+            .font(.callout)
+            .foregroundStyle(Color.accentColor)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("current-folder")
         }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .foregroundStyle(dropIndicator == .into("") ? Color.accentColor : .primary)
+        .background(dropIndicator == .into("") ? Color.accentColor.opacity(0.15) : .clear)
+        .contentShape(Rectangle())
+        .modifier(HeaderDrop(app: app, indicator: $dropIndicator))
+    }
+
+    var body: some View {
+        fileList
+        .safeAreaInset(edge: .top, spacing: 0) { header }
+        .onAppear {
+            expanded = Set(UserDefaults.standard.stringArray(forKey: expandedKey) ?? [])
+            reveal(session.selection)
+        }
+        .onChange(of: session.selection) { _, path in reveal(path) }
         .searchable(text: $session.sidebarQuery, placement: .sidebar, prompt: "Search notes or #tags")
         .task(id: "\(session.sidebarQuery)|\(session.indexVersion)") {
             try? await Task.sleep(for: .milliseconds(200))
@@ -363,6 +501,15 @@ private struct SidebarView: View {
         } label: {
             Label("Move to", systemImage: "folder")
         }
+        let siblings = session.children(of: parent).map(\.path)
+        Button { session.nudge(node.path, by: -1) } label: {
+            Label("Move Up", systemImage: "arrow.up")
+        }
+        .disabled(siblings.first == node.path)
+        Button { session.nudge(node.path, by: 1) } label: {
+            Label("Move Down", systemImage: "arrow.down")
+        }
+        .disabled(siblings.last == node.path)
         Button {
             renameText = node.title
             renaming = node
@@ -375,81 +522,222 @@ private struct SidebarView: View {
     }
 }
 
-/// Makes a folder row (or the Files header) a drop target: rows dragged onto it move in, files dropped
-/// onto it are imported into it.
-private struct FolderDrop: ViewModifier {
-    @Environment(AppModel.self) private var app
-    let folder: String?
-    @Binding var target: String?
-
-    func body(content: Content) -> some View {
-        if let folder {
-            content.onDrop(of: FileDrop.acceptedTypes, delegate: FileDropTarget(
-                app: app, folder: folder, targeted: Binding(
-                    get: { target == folder },
-                    set: { hovering in if hovering { target = folder } else if target == folder { target = nil } }
-                )
-            ))
-        } else {
-            content
-        }
-    }
+/// Where a drag over the sidebar would land.
+enum DropIndicator: Equatable {
+    /// Into this folder ("" is the top level, via the header).
+    case into(String)
+    /// An insertion line: in `folder`, before `before` (at the end when nil), drawn at `depth`.
+    case line(folder: String, before: String?, depth: Int)
 }
 
-private struct SidebarSelection: ViewModifier {
-    let path: String
-    @Binding var selection: String?
+/// One row of the file tree: indentation, disclosure arrow, icon and name.
+private struct TreeRow: View {
+    #if os(macOS)
+    static let height: CGFloat = 26
+    #else
+    static let height: CGFloat = 44
+    #endif
+    static let indent: CGFloat = 16
 
-    func body(content: Content) -> some View {
-        Button { selection = path } label: {
-            content.frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .background(selection == path ? Color.accentColor.opacity(0.15) : .clear,
-                    in: RoundedRectangle(cornerRadius: 6))
-        .accessibilityAddTraits(selection == path ? .isSelected : [])
-    }
-}
+    let node: FileNode
+    let depth: Int
+    let isOpen: Bool
+    let isSelected: Bool
+    let isCurrentFolder: Bool
+    let indicator: DropIndicator?
+    let toggle: () -> Void
 
-#if os(iOS)
-private struct SidebarDisclosureStyle: DisclosureGroupStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                configuration.label
-                Button { configuration.isExpanded.toggle() } label: {
-                    Image(systemName: configuration.isExpanded ? "chevron.down" : "chevron.right")
-                        .frame(width: 44, height: 44)
+    private var isDropTarget: Bool { indicator == .into(node.path) }
+
+    var body: some View {
+        HStack(spacing: 4) {
+            if node.isDirectory {
+                Button(action: toggle) {
+                    Image(systemName: "chevron.right")
+                        .rotationEffect(.degrees(isOpen ? 90 : 0))
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 16, height: TreeRow.height)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(configuration.isExpanded ? "Collapse folder" : "Expand folder")
+                .accessibilityLabel(isOpen ? "Collapse folder" : "Expand folder")
+                .accessibilityIdentifier((isOpen ? "collapse-" : "expand-") + node.path)
+            } else {
+                Color.clear.frame(width: 16)
             }
-            if configuration.isExpanded {
-                configuration.content.padding(.leading, 16)
+            Image(systemName: icon)
+                .foregroundStyle(node.isDirectory && (isCurrentFolder || isDropTarget) ? Color.accentColor : .secondary)
+                .frame(width: 20)
+            Text(node.title)
+                .lineLimit(1)
+                .fontWeight(isCurrentFolder ? .semibold : .regular)
+            Spacer(minLength: 0)
+        }
+        .padding(.leading, CGFloat(depth) * TreeRow.indent + 2)
+        .padding(.trailing, 6)
+        .frame(height: TreeRow.height)
+        .background(background, in: RoundedRectangle(cornerRadius: 6))
+        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(isDropTarget ? Color.accentColor : .clear, lineWidth: 2))
+        .overlay(alignment: .top) {
+            if case .line(_, let before, let lineDepth)? = indicator, before == node.path {
+                InsertionLine(depth: lineDepth).offset(y: -1)
             }
         }
     }
-}
-#endif
-
-private struct FileRow: View {
-    let node: FileNode
-    var dropTarget = false
 
     private var icon: String {
-        node.isDirectory ? "folder" : FileKind(path: node.path).symbol
+        guard node.isDirectory else { return FileKind(path: node.path).symbol }
+        return isOpen || isCurrentFolder || isDropTarget ? "folder.fill" : "folder"
     }
 
+    private var background: Color {
+        if isSelected { return Color.accentColor.opacity(0.22) }
+        if isDropTarget { return Color.accentColor.opacity(0.15) }
+        if isCurrentFolder { return Color.accentColor.opacity(0.08) }
+        return .clear
+    }
+}
+
+/// Finder's insertion line, indented to the level the drop would land at.
+private struct InsertionLine: View {
+    let depth: Int
+
     var body: some View {
-        Label(node.title, systemImage: dropTarget ? "folder.fill" : icon)
-            .lineLimit(1)
-            .foregroundStyle(dropTarget ? Color.accentColor : .primary)
-            .padding(.vertical, 6)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
-            .background(dropTarget ? Color.accentColor.opacity(0.15) : .clear, in: RoundedRectangle(cornerRadius: 6))
+        HStack(spacing: 0) {
+            Circle().strokeBorder(Color.accentColor, lineWidth: 2).frame(width: 7, height: 7)
+            Rectangle().fill(Color.accentColor).frame(height: 2)
+        }
+        .padding(.leading, CGFloat(depth) * TreeRow.indent + 22)
+        .allowsHitTesting(false)
+    }
+}
+
+/// Mac: makes a row draggable, and a drop target that works like Finder's list view: the middle of
+/// a folder drops into it; the top or bottom edge of any row inserts above or below it, at that
+/// row's level (so dropping beside a top-level row moves things out to the top level). Rows can't be
+/// dragged on iPad, where Move to, Move Up and Move Down in the row's menu do the job.
+private struct RowDrag: ViewModifier {
+    let node: FileNode
+    let depth: Int
+    let isOpen: Bool
+    let nextSibling: String?
+    let app: AppModel
+    @Binding var indicator: DropIndicator?
+
+    func body(content: Content) -> some View {
+        #if os(macOS)
+        content
+            .onDrag { VaultItem(path: node.path).itemProvider }
+            .onDrop(of: FileDrop.acceptedTypes, delegate: TreeDropDelegate(
+                app: app, indicator: $indicator,
+                target: { location in RowDrag.target(for: location, node: node, depth: depth, isOpen: isOpen, next: nextSibling) }))
+        #else
+        content
+        #endif
+    }
+
+    /// What a drop at `location` (in the row, y from the top) means.
+    static func target(for location: CGPoint, node: FileNode, depth: Int, isOpen: Bool, next: String?) -> DropIndicator {
+        let parent = (node.path as NSString).deletingLastPathComponent
+        let y = location.y / TreeRow.height
+        if node.isDirectory {
+            if y < 0.25 { return .line(folder: parent, before: node.path, depth: depth) }
+            if y > 0.75 {
+                // Below an open folder is the top of its contents.
+                if isOpen { return .line(folder: node.path, before: node.children?.first?.path, depth: depth + 1) }
+                return .line(folder: parent, before: next, depth: depth)
+            }
+            return .into(node.path)
+        }
+        return y < 0.5 ? .line(folder: parent, before: node.path, depth: depth)
+                       : .line(folder: parent, before: next, depth: depth)
+    }
+}
+
+/// Mac: the empty space under the tree is the end of the top level.
+private struct EndDrop: ViewModifier {
+    let app: AppModel
+    @Binding var indicator: DropIndicator?
+
+    func body(content: Content) -> some View {
+        #if os(macOS)
+        content.onDrop(of: FileDrop.acceptedTypes, delegate: TreeDropDelegate(
+            app: app, indicator: $indicator, target: { _ in .line(folder: "", before: nil, depth: 0) }))
+        #else
+        content
+        #endif
+    }
+}
+
+/// The Files header takes drops into the top level (rows on Mac, files from outside on both).
+private struct HeaderDrop: ViewModifier {
+    let app: AppModel
+    @Binding var indicator: DropIndicator?
+
+    func body(content: Content) -> some View {
+        content.onDrop(of: FileDrop.acceptedTypes, delegate: TreeDropDelegate(
+            app: app, indicator: $indicator, target: { _ in .into("") }))
+    }
+}
+
+/// Drops on the tree: Jet's own rows move (and, between rows, take that place in manual order);
+/// files from outside are imported into the folder the drop points at.
+struct TreeDropDelegate: DropDelegate {
+    let app: AppModel
+    @Binding var indicator: DropIndicator?
+    let target: (CGPoint) -> DropIndicator
+
+    private func isRow(_ info: DropInfo) -> Bool { info.hasItemsConforming(to: [.jetVaultItem]) }
+
+    func validateDrop(info: DropInfo) -> Bool {
+        #if os(iOS)
+        // Rows can't be dragged on iPad; files from other apps can still be dropped.
+        if isRow(info) { return false }
+        #endif
+        return isRow(info) || info.hasItemsConforming(to: [.fileURL, .item])
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        guard validateDrop(info: info) else { return DropProposal(operation: .forbidden) }
+        let destination = target(info.location)
+        if indicator != destination { indicator = destination }
+        return DropProposal(operation: isRow(info) ? .move : .copy)
+    }
+
+    func dropExited(info: DropInfo) {
+        indicator = nil
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        let destination = target(info.location)
+        indicator = nil
+        guard validateDrop(info: info) else { return false }
+        let providers = info.itemProviders(for: FileDrop.acceptedTypes)
+        let folder: String
+        var before: String?
+        var placing = false
+        switch destination {
+        case .into(let into): folder = into
+        case .line(let into, let sibling, _):
+            folder = into
+            before = sibling
+            placing = true
+        }
+        if isRow(info) {
+            Task { @MainActor in
+                guard let session = app.session else { return }
+                for path in await FileDrop.vaultPaths(in: providers) where path != before {
+                    if placing {
+                        session.move(path, into: folder, before: before)
+                    } else {
+                        session.move(path, into: folder)
+                    }
+                }
+            }
+            return true
+        }
+        return FileDrop.handle(providers, app: app, into: folder)
     }
 }
 

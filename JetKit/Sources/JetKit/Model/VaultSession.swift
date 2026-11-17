@@ -22,6 +22,8 @@ public struct FileNode: Identifiable, Hashable, Sendable {
     public let path: String
     public let isDirectory: Bool
     public var children: [FileNode]?
+    /// When the file was last changed (for sorting by date).
+    public var modified: Date? = nil
 
     public var id: String { path }
     public var fileName: String { (path as NSString).lastPathComponent }
@@ -72,6 +74,17 @@ public final class VaultSession {
     public var remoteURL = ""
     public var username: String { didSet { defaults.set(username, forKey: key("username")) } }
     public var autoSync: Bool { didSet { defaults.set(autoSync, forKey: key("autoSync")) } }
+    /// How the sidebar orders each folder. Manual follows the order you dragged things into.
+    public var sortMode: SortMode = .name {
+        didSet {
+            guard sortMode != oldValue else { return }
+            defaults.set(sortMode.rawValue, forKey: key("sortMode"))
+            refreshTree()
+        }
+    }
+    /// Manual order: folder path ("" for the top level) -> names in order. Kept in `.jet/order.json`
+    /// so it syncs with the vault.
+    @ObservationIgnored var manualOrder: [String: [String]] = [:]
 
     /// Lowercased note title -> relative path.
     public private(set) var notesByTitle: [String: String] = [:]
@@ -101,6 +114,8 @@ public final class VaultSession {
         self.root = ref.url
         self.username = UserDefaults.standard.string(forKey: "vault.\(ref.id.uuidString).username") ?? ""
         self.autoSync = UserDefaults.standard.object(forKey: "vault.\(ref.id.uuidString).autoSync") as? Bool ?? true
+        self.sortMode = (UserDefaults.standard.string(forKey: "vault.\(ref.id.uuidString).sortMode")).flatMap(SortMode.init) ?? .name
+        self.manualOrder = Self.loadOrder(root: ref.url)
         if GitRepository.isRepository(at: root.path), let repo = try? GitRepository.open(at: root.path) {
             remoteURL = repo.remoteURL ?? ""
         }
@@ -152,12 +167,14 @@ public final class VaultSession {
         var nodes: [FileNode] = []
         for name in names where !name.hasPrefix(".") {
             let child = relative.isEmpty ? name : relative + "/" + name
+            let url = directory.appendingPathComponent(name)
             var isDir: ObjCBool = false
-            guard fm.fileExists(atPath: directory.appendingPathComponent(name).path, isDirectory: &isDir) else { continue }
+            guard fm.fileExists(atPath: url.path, isDirectory: &isDir) else { continue }
+            let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
             if isDir.boolValue {
-                nodes.append(FileNode(path: child, isDirectory: true, children: scan(root: root, relative: child)))
+                nodes.append(FileNode(path: child, isDirectory: true, children: scan(root: root, relative: child), modified: modified))
             } else {
-                nodes.append(FileNode(path: child, isDirectory: false, children: nil))
+                nodes.append(FileNode(path: child, isDirectory: false, children: nil, modified: modified))
             }
         }
         return nodes.sorted { a, b in
@@ -175,7 +192,7 @@ public final class VaultSession {
     }
 
     public func refreshTree() {
-        tree = Self.scan(root: root, relative: "")
+        tree = arranged(Self.scan(root: root, relative: ""), in: "")
         if let selected = selection, !exists(selected) { selection = nil }
 
         var titles: [String: String] = [:]
@@ -293,6 +310,7 @@ public final class VaultSession {
         if exists(notes) {
             try? FileManager.default.moveItem(at: url(for: notes), to: url(for: Self.annotationsPath(for: newPath)))
         }
+        orderRenamed(from: path, to: newPath)
         didWriteFile()
         refreshTree()
         if wasSelected { selection = newPath }
@@ -322,6 +340,7 @@ public final class VaultSession {
         if exists(notes) {
             try? FileManager.default.moveItem(at: url(for: notes), to: url(for: Self.annotationsPath(for: newPath)))
         }
+        orderRenamed(from: path, to: newPath)
         didWriteFile()
         refreshTree()
         if let selected {
@@ -370,6 +389,7 @@ public final class VaultSession {
         if let selected = selection, selected == path || selected.hasPrefix(path + "/") { selection = nil }
         try? Self.forceRemove(url(for: path))
         try? FileManager.default.removeItem(at: url(for: Self.annotationsPath(for: path)))
+        orderRenamed(from: path, to: nil)
         didWriteFile()
         refreshTree()
     }

@@ -22,8 +22,12 @@ Plain-file notes with git sync, for iPad and Mac.
   refused (GitHub won't take them, so sync would stop) and 50–100 MB files ask first. Apps and other
   bundles, folders Jet can't read (macOS keeps Downloads and Desktop private), folders of more than 1000
   files and folders containing the vault are refused.
-- **Organizing**: drag files and folders onto a folder in the sidebar (or onto "Files" for the top
-  level), or use Move to in a file's menu. PDF annotations move with their PDF.
+- **Organizing**: click a folder to open it; the bar under "Files" shows the folder you're working in
+  (new notes go there). Sort by Manual, Name, Date Modified or Kind, or Clean Up By one of them (the
+  ⇅ menu). On the Mac, drag rows like Finder's list view: onto a folder to put it inside, between rows
+  to reorder (switching to manual order), or beside top-level rows / below the list to move it out of
+  a folder. On iPad, use a row's menu: Move to, Move Up, Move Down. Manual order is saved in
+  `.jet/order.json`, so it syncs. PDF annotations move with their PDF.
 - **Linking** (Obsidian-compatible): `[[wikilinks]]` (with `|alias` and `#heading`), backlinks and
   unlinked mentions under each note (one tap turns a mention into a link), `#tags` and `#nested/tags`
   (sidebar list, tap to filter, search `#tag`), YAML frontmatter properties (`tags`, `aliases` resolve links),

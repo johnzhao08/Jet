@@ -62,6 +62,10 @@ public enum SyncEngine {
 
     /// Handwriting merges stroke-by-stroke; everything else keeps both versions.
     static func resolve(_ conflict: MergeConflict) -> ConflictResolution {
+        // The sidebar's manual order: this device's arrangement wins rather than leaving a copy.
+        if conflict.path == VaultSession.orderFile, let ours = conflict.ours {
+            return .write(ours)
+        }
         if conflict.path.lowercased().hasSuffix(".ink"),
            let ours = conflict.ours, let theirs = conflict.theirs,
            let merged = InkMerge.merge(base: conflict.base, ours: ours, theirs: theirs) {
