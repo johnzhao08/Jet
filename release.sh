@@ -3,7 +3,7 @@
 # to App Store Connect (the build then shows up in TestFlight after Apple's processing, ~10-30 min).
 #
 #   ./release.sh              bump, commit, archive, upload
-#   ./release.sh --no-upload  same, but only export the signed .ipa to build/export
+#   ./release.sh --no-upload  same, but only export the signed .ipa to build.noindex/export
 set -e
 cd "$(dirname "$0")"
 
@@ -36,15 +36,15 @@ EOF2
 xcodegen generate --quiet
 echo "Building Jet $VERSION ($NEW)"
 
-rm -rf build/Jet.xcarchive build/export
-mkdir -p build
+rm -rf build.noindex/Jet.xcarchive build.noindex/export
+mkdir -p build.noindex
 # Archive unsigned; the export step signs it for App Store distribution (no registered devices needed).
 xcodebuild -project Jet.xcodeproj -scheme Jet -configuration Release \
-    -destination 'generic/platform=iOS' -derivedDataPath build/DerivedData \
-    -archivePath build/Jet.xcarchive CODE_SIGNING_ALLOWED=NO archive > build/archive.log 2>&1 \
-    || { tail -20 build/archive.log; echo "Archive failed; full log in build/archive.log" >&2; git checkout project.yml Jet.xcodeproj; exit 1; }
+    -destination 'generic/platform=iOS' -derivedDataPath build.noindex/DerivedData \
+    -archivePath build.noindex/Jet.xcarchive CODE_SIGNING_ALLOWED=NO archive > build.noindex/archive.log 2>&1 \
+    || { tail -20 build.noindex/archive.log; echo "Archive failed; full log in build.noindex/archive.log" >&2; git checkout project.yml Jet.xcodeproj; exit 1; }
 
-cat > build/ExportOptions.plist <<EOF
+cat > build.noindex/ExportOptions.plist <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -57,14 +57,14 @@ cat > build/ExportOptions.plist <<EOF
 </dict>
 </plist>
 EOF
-xcodebuild -exportArchive -archivePath build/Jet.xcarchive -exportOptionsPlist build/ExportOptions.plist \
-    -exportPath build/export -allowProvisioningUpdates > build/export.log 2>&1 \
-    || { tail -20 build/export.log; echo "Export failed; full log in build/export.log" >&2; git checkout project.yml Jet.xcodeproj; exit 1; }
+xcodebuild -exportArchive -archivePath build.noindex/Jet.xcarchive -exportOptionsPlist build.noindex/ExportOptions.plist \
+    -exportPath build.noindex/export -allowProvisioningUpdates > build.noindex/export.log 2>&1 \
+    || { tail -20 build.noindex/export.log; echo "Export failed; full log in build.noindex/export.log" >&2; git checkout project.yml Jet.xcodeproj; exit 1; }
 
 git commit -q -m "Release $VERSION ($NEW)" project.yml Jet.xcodeproj
 git tag "v$VERSION-$NEW"
 if [ "$DESTINATION" = upload ]; then
     echo "Uploaded Jet $VERSION ($NEW). It appears in TestFlight once Apple finishes processing."
 else
-    echo "Exported build/export/Jet.ipa for $VERSION ($NEW)."
+    echo "Exported build.noindex/export/Jet.ipa for $VERSION ($NEW)."
 fi

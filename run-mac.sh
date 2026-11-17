@@ -3,6 +3,7 @@
 set -e
 cd "$(dirname "$0")"
 xcodegen generate --quiet
-xcodebuild -project Jet.xcodeproj -scheme JetMac -configuration Debug -derivedDataPath build/DerivedData \
-    build > build/mac-debug.log 2>&1 || { tail -20 build/mac-debug.log; exit 1; }
-open build/DerivedData/Build/Products/Debug/Jet.app
+mkdir -p build.noindex
+xcodebuild -project Jet.xcodeproj -scheme JetMac -configuration Debug -derivedDataPath build.noindex/DerivedData \
+    build > build.noindex/mac-debug.log 2>&1 || { tail -20 build.noindex/mac-debug.log; exit 1; }
+open build.noindex/DerivedData/Build/Products/Debug/Jet.app

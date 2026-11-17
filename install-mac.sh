@@ -1,14 +1,14 @@
 #!/bin/sh
 # Builds the Mac app (Release) and installs it as /Applications/Jet.app, replacing an older copy.
 #   ./install-mac.sh            build and install
-#   ./install-mac.sh --no-copy  build only (build/Release/Jet.app)
+#   ./install-mac.sh --no-copy  build only (build.noindex/DerivedData/Build/Products/Release/Jet.app)
 set -e
 cd "$(dirname "$0")"
 xcodegen generate --quiet
-mkdir -p build
-xcodebuild -project Jet.xcodeproj -scheme JetMac -configuration Release -derivedDataPath build/DerivedData \
-    build > build/mac-release.log 2>&1 || { tail -20 build/mac-release.log; exit 1; }
-APP=build/DerivedData/Build/Products/Release/Jet.app
+mkdir -p build.noindex
+xcodebuild -project Jet.xcodeproj -scheme JetMac -configuration Release -derivedDataPath build.noindex/DerivedData \
+    build > build.noindex/mac-release.log 2>&1 || { tail -20 build.noindex/mac-release.log; exit 1; }
+APP=build.noindex/DerivedData/Build/Products/Release/Jet.app
 if [ "$1" = "--no-copy" ]; then
     echo "Built $APP"
     exit 0

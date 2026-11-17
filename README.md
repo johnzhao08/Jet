@@ -63,7 +63,7 @@ Mac: the `JetMac` target is a regular Mac app, signed to run on this Mac only.
 
 Bumps the build number, commits and tags it, archives the iPad app, and uploads it to App Store Connect.
 Testers in an internal TestFlight group with automatic distribution get it after Apple's processing.
-`--no-upload` exports the signed `.ipa` to `build/export` instead.
+`--no-upload` exports the signed `.ipa` to `build.noindex/export` instead.
 
 ## Test
 
@@ -85,7 +85,7 @@ The iPad command defaults to the iPad Pro 11-inch (M5) simulator. Pass another
 `xcodebuild` destination as the second argument to select a different simulator.
 Each test launches a Debug-only isolated vault, performs native drag gestures, and
 checks the move survives relaunch. Results, including failure screenshots and UI
-hierarchies, are saved under `build/UIResults-*.xcresult`.
+hierarchies, are saved under `build.noindex/UIResults-*.xcresult`.
 
 ## Layout
 
