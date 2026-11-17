@@ -40,9 +40,8 @@ struct VaultView: View {
             }
         }
         // Files dropped anywhere on the window: opened if they're already in a vault, else imported.
-        .onDrop(of: FileDrop.acceptedTypes, isTargeted: $dropTargeted) { providers in
-            FileDrop.handle(providers, app: app, into: nil)
-        }
+        .onDrop(of: FileDrop.acceptedTypes,
+                delegate: FileDropTarget(app: app, folder: nil, targeted: $dropTargeted))
         .overlay {
             if dropTargeted {
                 RoundedRectangle(cornerRadius: 12)
@@ -145,64 +144,85 @@ private struct SidebarView: View {
     @State private var importFolder = ""
     @State private var newFolderName = ""
 
-    var body: some View {
-        List(selection: $session.selection) {
-            if session.sidebarQuery.trimmingCharacters(in: .whitespaces).isEmpty {
-                Section {
-                    OutlineGroup(session.tree, children: \.children) { node in
-                        FileRow(node: node, dropTarget: dropTarget == node.path)
-                            .contextMenu { menu(for: node) }
-                            // Drag a row onto a folder (or the Files header) to move it there.
-                            .itemProvider { VaultItem(path: node.path).itemProvider }
-                            .modifier(FolderDrop(folder: node.isDirectory ? node.path : nil, target: $dropTarget))
-                    }
-                } header: {
-                    HStack {
-                        Text("Files")
-                            .foregroundStyle(dropTarget == "" ? Color.accentColor : .secondary)
-                        Spacer()
-                        Button { askForFolder(in: session.targetFolder) } label: {
-                            Label("New folder", systemImage: "folder.badge.plus")
-                                .labelStyle(.iconOnly)
-                                .font(.body)
-                        }
-                        .buttonStyle(.borderless)
-                        .help("New folder")
-                    }
-                    .contentShape(Rectangle())
-                    // Dropping on the header moves things to the vault's top level.
-                    .modifier(FolderDrop(folder: "", target: $dropTarget))
+    @ViewBuilder
+    private var rows: some View {
+        if session.sidebarQuery.trimmingCharacters(in: .whitespaces).isEmpty {
+            Section {
+                OutlineGroup(session.tree, children: \.children) { node in
+                    FileRow(node: node, dropTarget: dropTarget == node.path)
+                        .contextMenu { menu(for: node) }
+                        .modifier(SidebarSelection(path: node.path, selection: $session.selection))
+                        .onDrag { VaultItem(path: node.path).itemProvider }
+                        .modifier(FolderDrop(folder: node.isDirectory ? node.path : nil, target: $dropTarget))
+                        .accessibilityIdentifier("vault-row-" + node.path)
                 }
-                let tags = session.allTags
-                if !tags.isEmpty {
-                    Section("Tags") {
-                        ForEach(tags, id: \.name) { tag in
-                            Button { session.sidebarQuery = "#" + tag.name } label: {
-                                HStack {
-                                    Label(tag.name, systemImage: "number")
-                                    Spacer()
-                                    Text("\(tag.count)").foregroundStyle(.secondary).monospacedDigit()
-                                }
-                                .contentShape(Rectangle())
+                #if os(iOS)
+                .disclosureGroupStyle(SidebarDisclosureStyle())
+                #endif
+            }
+            let tags = session.allTags
+            if !tags.isEmpty {
+                Section("Tags") {
+                    ForEach(tags, id: \.name) { tag in
+                        Button { session.sidebarQuery = "#" + tag.name } label: {
+                            HStack {
+                                Label(tag.name, systemImage: "number")
+                                Spacer()
+                                Text("\(tag.count)").foregroundStyle(.secondary).monospacedDigit()
                             }
-                            .buttonStyle(.plain)
+                            .contentShape(Rectangle())
                         }
+                        .buttonStyle(.plain)
                     }
-                }
-            } else if hits.isEmpty {
-                Text("No matches").foregroundStyle(.secondary)
-            } else {
-                ForEach(hits) { hit in
-                    VStack(alignment: .leading, spacing: 2) {
-                        Label(((hit.path as NSString).lastPathComponent as NSString).deletingPathExtension,
-                              systemImage: FileKind(path: hit.path).symbol)
-                        if !hit.snippet.isEmpty {
-                            Text(hit.snippet).font(.caption).foregroundStyle(.secondary).lineLimit(2)
-                        }
-                    }
-                    .tag(hit.path)
                 }
             }
+        } else if hits.isEmpty {
+            Text("No matches").foregroundStyle(.secondary)
+        } else {
+            ForEach(hits) { hit in
+                VStack(alignment: .leading, spacing: 2) {
+                    Label(((hit.path as NSString).lastPathComponent as NSString).deletingPathExtension,
+                          systemImage: FileKind(path: hit.path).symbol)
+                    if !hit.snippet.isEmpty {
+                        Text(hit.snippet).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    }
+                }
+                .modifier(SidebarSelection(path: hit.path, selection: $session.selection))
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var fileList: some View {
+        // Keep row drag and drop gestures outside List's platform-specific selection handling.
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 8) { rows }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+        }
+    }
+
+    var body: some View {
+        fileList
+        .safeAreaInset(edge: .top, spacing: 0) {
+            HStack {
+                Label("Files", systemImage: "folder")
+                    .accessibilityIdentifier("vault-root-drop")
+                Spacer()
+                Button { askForFolder(in: session.targetFolder) } label: {
+                    Label("New folder", systemImage: "folder.badge.plus")
+                        .labelStyle(.iconOnly)
+                }
+                .buttonStyle(.borderless)
+                .help("New folder")
+            }
+            .padding(.horizontal, 16)
+            .frame(minHeight: 44)
+            .foregroundStyle(dropTarget == "" ? Color.accentColor : .secondary)
+            .background(dropTarget == "" ? Color.accentColor.opacity(0.15) : .clear)
+            .contentShape(Rectangle())
+            .accessibilityHint("Drop files or folders here to move them to the top level")
+            .modifier(FolderDrop(folder: "", target: $dropTarget))
         }
         .searchable(text: $session.sidebarQuery, placement: .sidebar, prompt: "Search notes or #tags")
         .task(id: "\(session.sidebarQuery)|\(session.indexVersion)") {
@@ -364,18 +384,55 @@ private struct FolderDrop: ViewModifier {
 
     func body(content: Content) -> some View {
         if let folder {
-            content.onDrop(of: FileDrop.acceptedTypes, isTargeted: Binding(
-                get: { target == folder },
-                set: { hovering in if hovering { target = folder } else if target == folder { target = nil } }
-            )) { providers in
-                target = nil
-                return FileDrop.handle(providers, app: app, into: folder)
-            }
+            content.onDrop(of: FileDrop.acceptedTypes, delegate: FileDropTarget(
+                app: app, folder: folder, targeted: Binding(
+                    get: { target == folder },
+                    set: { hovering in if hovering { target = folder } else if target == folder { target = nil } }
+                )
+            ))
         } else {
             content
         }
     }
 }
+
+private struct SidebarSelection: ViewModifier {
+    let path: String
+    @Binding var selection: String?
+
+    func body(content: Content) -> some View {
+        Button { selection = path } label: {
+            content.frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .background(selection == path ? Color.accentColor.opacity(0.15) : .clear,
+                    in: RoundedRectangle(cornerRadius: 6))
+        .accessibilityAddTraits(selection == path ? .isSelected : [])
+    }
+}
+
+#if os(iOS)
+private struct SidebarDisclosureStyle: DisclosureGroupStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                configuration.label
+                Button { configuration.isExpanded.toggle() } label: {
+                    Image(systemName: configuration.isExpanded ? "chevron.down" : "chevron.right")
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(configuration.isExpanded ? "Collapse folder" : "Expand folder")
+            }
+            if configuration.isExpanded {
+                configuration.content.padding(.leading, 16)
+            }
+        }
+    }
+}
+#endif
 
 private struct FileRow: View {
     let node: FileNode
@@ -389,7 +446,9 @@ private struct FileRow: View {
         Label(node.title, systemImage: dropTarget ? "folder.fill" : icon)
             .lineLimit(1)
             .foregroundStyle(dropTarget ? Color.accentColor : .primary)
-            .padding(.vertical, 1)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
             .background(dropTarget ? Color.accentColor.opacity(0.15) : .clear, in: RoundedRectangle(cornerRadius: 6))
     }
 }

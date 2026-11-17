@@ -38,6 +38,28 @@ public final class AppModel {
     private static let lastVaultKey = "jet.lastVault"
 
     public init() {
+        #if DEBUG
+        if let value = ProcessInfo.processInfo.environment["JET_UI_TEST_VAULT"], let id = UUID(uuidString: value) {
+            let name = "JetUITest-\(id.uuidString)"
+            #if os(macOS)
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(name)
+            let ref = VaultRef(id: id, name: name, location: root.path)
+            #else
+            let ref = VaultRef(id: id, name: name, location: name)
+            let root = ref.url
+            #endif
+            do {
+                if !FileManager.default.fileExists(atPath: root.path) {
+                    try FileManager.default.createDirectory(at: root.appendingPathComponent("Folder"), withIntermediateDirectories: true)
+                    try "# Root\n".write(to: root.appendingPathComponent("Root.md"), atomically: true, encoding: .utf8)
+                    try "# Nested\n".write(to: root.appendingPathComponent("Folder/Nested.md"), atomically: true, encoding: .utf8)
+                }
+                vaults = [ref]
+                session = VaultSession(ref: ref)
+            } catch { fatalError("Could not create UI test vault: \(error)") }
+            return
+        }
+        #endif
         if let data = UserDefaults.standard.data(forKey: Self.vaultsKey),
            let saved = try? JSONDecoder().decode([VaultRef].self, from: data) {
             vaults = saved
