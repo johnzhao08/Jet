@@ -24,25 +24,31 @@ struct MarkdownNoteView: View {
         Group {
             if reading {
                 MarkdownPreview(session: session, model: model, path: path)
-            } else if #available(iOS 18.0, macOS 15.0, *) {
-                CursorTextEditor(text: $model.text, insertion: $insertion)
             } else {
-                TextEditor(text: $model.text)
-                    .font(.system(.body, design: .monospaced))
-                    .scrollContentBackground(.hidden)
-                    .padding(.horizontal, 12)
-                    .padding(.top, 8)
-                    .onChange(of: insertion) { _, snippet in
-                        guard let snippet else { return }
-                        insertion = nil
-                        model.text = TextInsertion.appending(snippet, to: model.text)
+                #if os(macOS)
+                MarkdownTextView(text: $model.text, insertion: $insertion, image: { embed in
+                    guard let file = session.embeddedFile(embed, inNote: path),
+                          FileKind(path: file) == .image else { return nil }
+                    return session.url(for: file)
+                }) { files in
+                    files.compactMap { url in
+                        guard let type = UTType(filenameExtension: url.pathExtension), type.conforms(to: .image),
+                              let data = try? Data(contentsOf: url),
+                              let path = session.addImage(data, type: type, named: url.deletingPathExtension().lastPathComponent)
+                        else { return nil }
+                        return "![[\(session.linkTarget(for: path))]]"
                     }
+                }
+                #else
+                sourceEditor
+                #endif
             }
         }
         .imageInsertion($imageSource, session: session) { path, _ in embed(path) }
         #if os(macOS)
-        // Pictures dropped on the note go into it (saved in Attachments); other files fall through to
-        // the window, which imports them, as does the sidebar.
+        // In the reading view, pictures dropped on the note go into it (saved in Attachments); the
+        // editor takes its own drops, at the spot they land. Other files fall through to the window,
+        // which imports them, as does the sidebar.
         .onDrop(of: FileDrop.acceptedTypes, delegate: PictureDrop(session: session) { path, _, _ in embed(path) })
         #endif
         .toolbar {
@@ -85,6 +91,28 @@ struct MarkdownNoteView: View {
             session.unregisterEditor(editorID)
         }
         .onChange(of: session.contentVersion) { model.reloadIfChangedOnDisk() }
+    }
+
+    /// iPad's source editor.
+    @ViewBuilder
+    private var sourceEditor: some View {
+        @Bindable var model = model
+        Group {
+            if #available(iOS 18.0, macOS 15.0, *) {
+                CursorTextEditor(text: $model.text, insertion: $insertion)
+            } else {
+                TextEditor(text: $model.text)
+                    .font(.system(.body, design: .monospaced))
+                    .scrollContentBackground(.hidden)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 8)
+                    .onChange(of: insertion) { _, snippet in
+                        guard let snippet else { return }
+                        insertion = nil
+                        model.text = TextInsertion.appending(snippet, to: model.text)
+                    }
+            }
+        }
     }
 
     /// Puts a picture's embed at the cursor (or at the end while reading).
@@ -387,17 +415,7 @@ struct MarkdownPreview: View {
     }
 
     /// A Markdown-style path relative to this note's folder (`../Attachments/a%20b.png`).
-    private func relativeToNote(_ target: String) -> String? {
-        let decoded = target.removingPercentEncoding ?? target
-        let folder = (path as NSString).deletingLastPathComponent
-        var parts = folder.isEmpty ? [] : folder.split(separator: "/").map(String.init)
-        for part in decoded.split(separator: "/").map(String.init) {
-            if part == ".." { guard !parts.isEmpty else { return nil }; parts.removeLast() }
-            else if part != "." { parts.append(part) }
-        }
-        let candidate = parts.joined(separator: "/")
-        return !candidate.isEmpty && session.exists(candidate) && !session.isDirectory(candidate) ? candidate : nil
-    }
+    private func relativeToNote(_ target: String) -> String? { session.file(target, relativeTo: path) }
 
     private func noteTitle(_ path: String) -> String {
         ((path as NSString).lastPathComponent as NSString).deletingPathExtension
@@ -517,6 +535,35 @@ struct MarkdownPreview: View {
         } else {
             Text("Missing: \(name)").foregroundStyle(.secondary).italic()
         }
+    }
+}
+
+extension VaultSession {
+    /// A link target written relative to the note at `notePath` (`../Pics/a.png`), if that file exists.
+    func file(_ target: String, relativeTo notePath: String) -> String? {
+        let decoded = target.removingPercentEncoding ?? target
+        let folder = (notePath as NSString).deletingLastPathComponent
+        var parts = folder.isEmpty ? [] : folder.split(separator: "/").map(String.init)
+        for part in decoded.split(separator: "/").map(String.init) {
+            if part == ".." { guard !parts.isEmpty else { return nil }; parts.removeLast() }
+            else if part != "." { parts.append(part) }
+        }
+        let candidate = parts.joined(separator: "/")
+        return !candidate.isEmpty && exists(candidate) && !isDirectory(candidate) ? candidate : nil
+    }
+
+    /// The vault file an embed (`![[name]]`, `![alt](path)`) in the note at `notePath` shows, if any.
+    func embeddedFile(_ embed: String, inNote notePath: String) -> String? {
+        var target = embed
+        if target.hasPrefix("![["), target.hasSuffix("]]") {
+            target = String(target.dropFirst(3).dropLast(2))
+        } else if let open = target.range(of: "]("), target.hasSuffix(")") {
+            target = String(target[open.upperBound...].dropLast())
+        } else {
+            return nil
+        }
+        let name = target.split(separator: "|").first.map(String.init) ?? target
+        return file(name, relativeTo: notePath) ?? resolve(name)
     }
 }
 

@@ -1,10 +1,92 @@
 import Foundation
 import PencilKit
 import AppKit
+import SwiftUI
 import ImageIO
 import UniformTypeIdentifiers
 import CoreText
-import JetKit
+@testable import JetKit
+
+// `jet-selftest --editor-snapshot <folder>` renders the Mac Markdown editor on a sample note, in
+// light and dark, to look at without running the app.
+if let flag = CommandLine.arguments.firstIndex(of: "--editor-snapshot"), flag + 1 < CommandLine.arguments.count {
+    MainActor.assumeIsolated { () -> Void in
+        _ = NSApplication.shared
+        let folder = URL(fileURLWithPath: CommandLine.arguments[flag + 1])
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let sample = """
+        ---
+        tags: [course, cs]
+        ---
+        # Order notation
+        Big-O describes how a function **grows**, ignoring *constant factors*. See [[Week 1 notes]] and #cs/algorithms.
+
+        ## Definitions
+        - f(n) is in O(g(n)) when there are constants c and n₀ with f(n) ≤ c·g(n) for all n ≥ n₀, which is a long line that wraps onto the next one
+        - Θ is a tight bound
+        1. First numbered point
+        - [x] Read chapter 2
+        - [ ] Finish problem set
+
+        > The analysis of algorithms is about counting steps, not seconds.
+
+        Inline `O(n log n)` code, ~~wrong idea~~, and a [link](https://example.com).
+
+        ```swift
+        for i in 0..<n {
+            print(i)
+        }
+        ```
+        ---
+        ![[Attachments/graph.png]]
+        """
+        // A picture for the embed: a soft gradient with a circle.
+        let picture = folder.appendingPathComponent("graph.png")
+        let ctx = CGContext(data: nil, width: 1200, height: 600, bitsPerComponent: 8, bytesPerRow: 0,
+                            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        ctx.drawLinearGradient(CGGradient(colorsSpace: nil, colors: [CGColor(red: 0.2, green: 0.4, blue: 0.9, alpha: 1),
+                                                                     CGColor(red: 0.6, green: 0.2, blue: 0.7, alpha: 1)] as CFArray,
+                                          locations: [0, 1])!, start: .zero, end: CGPoint(x: 1200, y: 600), options: [])
+        ctx.setFillColor(CGColor(gray: 1, alpha: 0.85))
+        ctx.fillEllipse(in: CGRect(x: 500, y: 200, width: 200, height: 200))
+        let pictureDest = CGImageDestinationCreateWithURL(picture as CFURL, "public.png" as CFString, 1, nil)!
+        CGImageDestinationAddImage(pictureDest, ctx.makeImage()!, nil)
+        CGImageDestinationFinalize(pictureDest)
+        for dark in [false, true] {
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 1250), styleMask: [.titled],
+                                  backing: .buffered, defer: false)
+            window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+            let host = NSHostingView(rootView: MarkdownTextView(text: .constant(sample), insertion: .constant(nil),
+                                                                image: { _ in picture }, embedPictures: { _ in [] })
+                .background(Color(nsColor: .textBackgroundColor)))
+            host.frame = window.contentRect(forFrameRect: window.frame)
+            window.contentView = host
+            host.layoutSubtreeIfNeeded()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+            // Put the cursor on the "## Definitions" line so its markup shows, as while editing.
+            if let textView = host.firstDescendant(of: MarkdownNSTextView.self) {
+                textView.setSelectedRange(NSRange(location: (sample as NSString).range(of: "Definitions").location, length: 0))
+            }
+            RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+            let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
+            host.cacheDisplay(in: host.bounds, to: rep)
+            let url = folder.appendingPathComponent(dark ? "editor-dark.png" : "editor-light.png")
+            try? rep.representation(using: .png, properties: [:])?.write(to: url)
+            print("wrote \(url.path)")
+        }
+    }
+    exit(0)
+}
+
+extension NSView {
+    func firstDescendant<T: NSView>(of type: T.Type) -> T? {
+        for sub in subviews {
+            if let match = sub as? T { return match }
+            if let match = sub.firstDescendant(of: type) { return match }
+        }
+        return nil
+    }
+}
 
 // End-to-end check of the sync engine: two "devices" (clones) syncing through a local bare repo.
 
@@ -504,6 +586,16 @@ do {
     }
     semaphore.wait()
     expect(paths == ["Welcome.md"], "a dragged row decodes to its path")
+    var groupPaths: [String] = []
+    Task.detached {
+        groupPaths = await FileDrop.vaultPaths(in: [VaultItem(paths: ["A.md", "Course", "B.ink"]).itemProvider])
+        semaphore.signal()
+    }
+    semaphore.wait()
+    expect(groupPaths == ["A.md", "Course", "B.ink"], "a drag of several picked rows carries them all, in order")
+    expect(FileDrop.outermost(["Course", "Course/Week 1/Notes.md", "A.md", "Z.md"],
+                              order: ["A.md", "Course", "Course/Week 1", "Course/Week 1/Notes.md", "Z.md"])
+           == ["A.md", "Course", "Z.md"], "rows inside a picked folder go with the folder, not on their own")
     expect(urls.map(\.standardizedFileURL.path) == [file.standardizedFileURL.path], "a Finder drop gives the original file")
 
     // A browser image drag, as its pasteboard types (checked on every mouse move, without loading anything).
@@ -636,6 +728,53 @@ do {
     print("  FAIL  threw: \(error.localizedDescription)")
 }
 
+print("16b. Styling Markdown as you type")
+do {
+    let note = """
+    ---
+    tags: [a]
+    ---
+    # Title
+    Some **bold**, *italic*, `code` and [[Other note]] with #tag.
+    - [x] done item
+    > quoted
+    ```
+    # not a heading
+    **not bold**
+    ```
+    [site](https://example.com)
+    """
+    let spans = MarkdownStyling.spans(in: note)
+    let ns = note as NSString
+    func roles(of piece: String) -> [MarkdownStyling.Role] {
+        let range = ns.range(of: piece)
+        return spans.filter { $0.range == range }.map(\.role)
+    }
+    func covered(_ piece: String, by role: MarkdownStyling.Role) -> Bool {
+        let range = ns.range(of: piece)
+        return spans.contains { $0.role == role && NSIntersectionRange($0.range, range) == range }
+    }
+    expect(roles(of: "# Title").contains(.heading(1)), "a # line is a level-1 heading")
+    expect(roles(of: "bold").contains(.bold) && roles(of: "**").contains(.markup(hideable: true)),
+           "bold text is bold and its ** is markup that hides off the line being edited")
+    expect(roles(of: "italic").contains(.italic), "*italic* is italic")
+    expect(roles(of: "code").contains(.code), "`code` is code")
+    expect(roles(of: "Other note").contains(.wikilink), "a [[wikilink]]'s name is a link")
+    expect(roles(of: "#tag").contains(.tag), "#tag is a tag")
+    expect(covered("done item", by: .taskDone), "a ticked task is struck through")
+    expect(covered("quoted", by: .quote), "> lines are quotes")
+    expect(covered("tags: [a]", by: .frontmatter), "front matter is styled as front matter")
+    let fenced = ns.range(of: "# not a heading")
+    expect(!spans.contains { if case .heading = $0.role { return NSIntersectionRange($0.range, fenced).length > 0 }; return false },
+           "a # inside a code block isn't a heading")
+    expect(!spans.contains { $0.role == .bold && NSIntersectionRange($0.range, ns.range(of: "not bold")).length > 0 },
+           "nor is ** inside it bold")
+    expect(roles(of: "site").contains(.link) && roles(of: "](https://example.com)").contains(.markup(hideable: true)),
+           "a [link](address) shows its text; the address is markup")
+    expect(!spans.contains { $0.role == .url && NSIntersectionRange($0.range, ns.range(of: "https://example.com")).length > 0 },
+           "a link's own address isn't styled as a bare URL")
+}
+
 print("17. Sorting, manual order and Clean Up")
 do {
     let vault = work.appendingPathComponent("order")
@@ -648,6 +787,14 @@ do {
     MainActor.assumeIsolated {
         let session = VaultSession(ref: VaultRef(name: "order", location: vault.path))
         func top() -> [String] { MainActor.assumeIsolated { session.tree.map(\.fileName) } }
+        session.selection = "Course/x.md"
+        expect(session.targetFolder == "Course", "new things go in the open note's folder")
+        session.workingFolder = ""
+        expect(session.targetFolder == "" && session.selection == "Course/x.md",
+               "going back to the top level keeps the note open but puts new things at the top")
+        session.selection = "Course/y.md"
+        expect(session.targetFolder == "Course", "opening something makes its folder current again")
+        session.selection = nil
         session.sortMode = .name
         expect(top() == ["Course", "a.md", "b.md", "c.ink"], "by name: folders first, then names")
         session.sortMode = .modified

@@ -6,10 +6,11 @@ extension UTType {
     static let jetVaultItem = UTType(exportedAs: "com.johnzhao.jet.vault-item")
 }
 
-/// A sidebar row being dragged: its path in the open vault.
+/// Sidebar rows being dragged: their paths in the open vault (several when you drag a selection).
 public struct VaultItem: Codable, Transferable {
-    public let path: String
-    public init(path: String) { self.path = path }
+    public let paths: [String]
+    public init(path: String) { paths = [path] }
+    public init(paths: [String]) { self.paths = paths }
 
     public static var transferRepresentation: some TransferRepresentation {
         CodableRepresentation(contentType: .jetVaultItem)
@@ -25,7 +26,7 @@ extension VaultItem {
             done(data, nil)
             return nil
         }
-        provider.suggestedName = (path as NSString).lastPathComponent
+        provider.suggestedName = paths.count == 1 ? (paths[0] as NSString).lastPathComponent : "\(paths.count) items"
         return provider
     }
 }
@@ -132,6 +133,14 @@ public enum FileDrop {
         }
     }
 
+    /// Picked rows to move or delete together, in `order` (as shown), leaving out any inside a picked
+    /// folder: they go with it.
+    public static func outermost(_ paths: Set<String>, order: [String]) -> [String] {
+        order.filter { path in
+            paths.contains(path) && !paths.contains { other in path.hasPrefix(other + "/") }
+        }
+    }
+
     /// The paths of dragged sidebar rows.
     public static func vaultPaths(in providers: [NSItemProvider]) async -> [String] {
         var paths: [String] = []
@@ -141,7 +150,7 @@ public enum FileDrop {
                     continuation.resume(returning: data)
                 }
             }
-            if let data, let item = try? JSONDecoder().decode(VaultItem.self, from: data) { paths.append(item.path) }
+            if let data, let item = try? JSONDecoder().decode(VaultItem.self, from: data) { paths += item.paths }
         }
         return paths
     }

@@ -63,7 +63,16 @@ public final class VaultSession {
 
     public var tree: [FileNode] = []
     /// The open note. Remembered per vault so the app reopens where you left off.
-    public var selection: String? { didSet { defaults.set(selection, forKey: key("lastNote")) } }
+    public var selection: String? {
+        didSet {
+            defaults.set(selection, forKey: key("lastNote"))
+            // Opening something makes its folder where new things go again.
+            if selection != oldValue { workingFolder = nil }
+        }
+    }
+    /// Where new notes and folders go when chosen apart from what's open (the sidebar's Home, or a
+    /// click on empty space: back to the top level, with the open note left open). Nil follows `selection`.
+    public var workingFolder: String?
     /// Bumped whenever sync rewrote files, so open editors reload.
     public var contentVersion = 0
 
@@ -237,6 +246,7 @@ public final class VaultSession {
 
     /// The folder a new item should land in, given what is selected.
     public var targetFolder: String {
+        if let workingFolder { return workingFolder }
         guard let selected = selection else { return "" }
         return isDirectory(selected) ? selected : (selected as NSString).deletingLastPathComponent
     }

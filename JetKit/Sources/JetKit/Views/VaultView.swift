@@ -145,6 +145,11 @@ private struct SidebarView: View {
     @State private var renaming: FileNode?
     @State private var renameText = ""
     @State private var deleting: FileNode?
+    /// Rows picked with Shift-click (a range) or ⌘-click (one at a time), to move or delete together (Mac).
+    @State private var picked: Set<String> = []
+    /// Where a Shift-click range starts: the last row clicked without Shift.
+    @State private var anchor: String?
+    @State private var deletingMany: [String]?
     /// The parent folder of a folder being named, while the "New folder" prompt is up.
     @State private var newFolderParent: String?
     /// The "Import files" picker, and the folder picked files go into.
@@ -176,15 +181,16 @@ private struct SidebarView: View {
             ForEach(Array(rows.enumerated()), id: \.element.node.path) { index, row in
                 TreeRow(node: row.node, depth: row.depth,
                         isOpen: expanded.contains(row.node.path),
-                        isSelected: session.selection == row.node.path,
+                        isSelected: picked.isEmpty ? session.selection == row.node.path : picked.contains(row.node.path),
                         isCurrentFolder: row.node.isDirectory && session.targetFolder == row.node.path,
                         indicator: dropIndicator,
                         toggle: { toggle(row.node.path) })
                     .contentShape(Rectangle())
-                    .onTapGesture { open(row.node) }
+                    .onTapGesture { click(row.node, rows: rows) }
                     .contextMenu { menu(for: row.node) }
                     .modifier(RowDrag(node: row.node, depth: row.depth, isOpen: expanded.contains(row.node.path),
                                       nextSibling: nextSibling(of: row.node.path),
+                                      dragged: { group(for: row.node) },
                                       app: app, indicator: $dropIndicator))
                     .accessibilityElement(children: .combine)
                     .accessibilityIdentifier("vault-row-" + row.node.path)
@@ -245,11 +251,59 @@ private struct SidebarView: View {
         return siblings[index + 1]
     }
 
+    /// A plain click opens the row. On the Mac, Shift-click picks every row from the last plain click
+    /// to this one and ⌘-click picks or unpicks one row, like Finder; picked rows move and delete together.
+    private func click(_ node: FileNode, rows: [(node: FileNode, depth: Int)]) {
+        #if os(macOS)
+        let flags = NSEvent.modifierFlags
+        if flags.contains(.shift) || flags.contains(.command) {
+            var set = picked
+            // Start from what's open, so the first Shift- or ⌘-click adds to it.
+            if set.isEmpty, let open = session.selection, rows.contains(where: { $0.node.path == open }) { set.insert(open) }
+            if flags.contains(.shift) {
+                let order = rows.map(\.node.path)
+                let from = anchor ?? session.selection ?? node.path
+                if let a = order.firstIndex(of: from), let b = order.firstIndex(of: node.path) {
+                    set.formUnion(order[min(a, b)...max(a, b)])
+                } else {
+                    set.insert(node.path)
+                }
+            } else {
+                if set.contains(node.path) { set.remove(node.path) } else { set.insert(node.path) }
+                anchor = node.path
+            }
+            picked = set
+            return
+        }
+        #endif
+        picked = []
+        anchor = node.path
+        open(node)
+    }
+
+    /// Back to the top level: new notes and folders go at the top. The open note stays open; nothing
+    /// stays picked.
+    private func goToTopLevel() {
+        picked = []
+        anchor = nil
+        session.workingFolder = ""
+    }
+
+    /// What an action on `node` applies to: the whole picked set when `node` is in it, else just `node`.
+    /// Rows inside a picked folder are left out (they go with the folder), in the order shown.
+    private func group(for node: FileNode) -> [String] {
+        guard picked.count > 1, picked.contains(node.path) else { return [node.path] }
+        return FileDrop.outermost(picked, order: visibleRows.map(\.node.path))
+    }
+
     /// A click on a folder opens it (and makes it the folder you're working in); a click on a
     /// folder that's already current closes it again.
     private func open(_ node: FileNode) {
+        // After going back to the top level, a click on what's already open makes it current again.
+        let wasAtTop = session.workingFolder != nil
+        session.workingFolder = nil
         if node.isDirectory {
-            if session.selection == node.path { toggle(node.path) } else {
+            if session.selection == node.path && !wasAtTop { toggle(node.path) } else {
                 session.selection = node.path
                 setOpen(node.path, true)
             }
@@ -281,10 +335,18 @@ private struct SidebarView: View {
 
     @ViewBuilder
     private var fileList: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) { rows }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
+        GeometryReader { viewport in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) { rows }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    // At least as tall as the sidebar, so every empty spot is part of the list.
+                    .frame(maxWidth: .infinity, minHeight: viewport.size.height, alignment: .top)
+                    // A click anywhere that isn't a row, a tag or a button goes back to the top level
+                    // (where new things go); what's open stays open. Rows' own clicks take precedence.
+                    .contentShape(Rectangle())
+                    .onTapGesture { goToTopLevel() }
+            }
         }
     }
 
@@ -324,7 +386,7 @@ private struct SidebarView: View {
             }
             // Where you are: new notes and folders go here.
             HStack(spacing: 4) {
-                Button { session.selection = nil } label: {
+                Button { goToTopLevel() } label: {
                     Image(systemName: "house")
                 }
                 .buttonStyle(.borderless)
@@ -334,6 +396,7 @@ private struct SidebarView: View {
                     Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
                     Button(parts[index]) {
                         let folder = parts[...index].joined(separator: "/")
+                        session.workingFolder = nil
                         session.selection = folder
                         setOpen(folder, true)
                     }
@@ -361,6 +424,11 @@ private struct SidebarView: View {
         fileList
         .safeAreaInset(edge: .top, spacing: 0) { header }
         .clearsWhenDragEnds($dropIndicator)
+        // Picked rows that moved, were renamed or deleted are no longer picked.
+        .onChange(of: visibleRows.map(\.node.path)) { _, paths in
+            picked.formIntersection(paths)
+            if picked.count < 2 { picked = [] }
+        }
         .onAppear {
             expanded = Set(UserDefaults.standard.stringArray(forKey: expandedKey) ?? [])
             reveal(session.selection)
@@ -461,6 +529,21 @@ private struct SidebarView: View {
                  ? "The folder and everything in it will be deleted. Synced versions stay in git history."
                  : "Synced versions stay in git history.")
         }
+        .confirmationDialog(
+            "Delete \(deletingMany?.count ?? 0) items?",
+            isPresented: Binding(get: { deletingMany != nil }, set: { if !$0 { deletingMany = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Delete \(deletingMany?.count ?? 0) Items", role: .destructive) {
+                for path in deletingMany ?? [] { session.delete(path) }
+                picked = []
+            }
+        } message: {
+            Text(((deletingMany ?? []).prefix(6).map { ($0 as NSString).lastPathComponent }
+                  + ((deletingMany?.count ?? 0) > 6 ? ["and \((deletingMany?.count ?? 0) - 6) more"] : []))
+                .joined(separator: ", ")
+                 + ". Folders go with everything in them. Synced versions stay in git history.")
+        }
     }
 
     /// Every folder in the vault, depth first.
@@ -480,6 +563,41 @@ private struct SidebarView: View {
 
     @ViewBuilder
     private func menu(for node: FileNode) -> some View {
+        let group = group(for: node)
+        if group.count > 1 {
+            groupMenu(group)
+        } else {
+            singleMenu(for: node)
+        }
+    }
+
+    /// The menu for several picked rows: move them all, or delete them all.
+    @ViewBuilder
+    private func groupMenu(_ paths: [String]) -> some View {
+        let destinations = [""] + folders(in: session.tree).filter { folder in
+            !paths.contains { folder == $0 || folder.hasPrefix($0 + "/") }
+        }
+        Menu {
+            ForEach(destinations, id: \.self) { folder in
+                Button(folder.isEmpty ? "Top level" : folder) {
+                    for path in paths { session.move(path, into: folder) }
+                    picked = []
+                }
+            }
+        } label: {
+            Label("Move \(paths.count) Items to", systemImage: "folder")
+        }
+        Button(role: .destructive) { deletingMany = paths } label: {
+            Label("Delete \(paths.count) Items…", systemImage: "trash")
+        }
+        Divider()
+        Button { picked = [] } label: {
+            Label("Deselect", systemImage: "xmark.circle")
+        }
+    }
+
+    @ViewBuilder
+    private func singleMenu(for node: FileNode) -> some View {
         let folder = node.isDirectory ? node.path : (node.path as NSString).deletingLastPathComponent
         Button { session.requestNewNote(kind: .ink, in: folder) } label: {
             Label("New handwritten note here", systemImage: "pencil.tip")
@@ -626,13 +744,15 @@ private struct RowDrag: ViewModifier {
     let depth: Int
     let isOpen: Bool
     let nextSibling: String?
+    /// The paths a drag of this row carries: the picked rows when it's one of them.
+    let dragged: () -> [String]
     let app: AppModel
     @Binding var indicator: DropIndicator?
 
     func body(content: Content) -> some View {
         #if os(macOS)
         content
-            .onDrag { VaultItem(path: node.path).itemProvider }
+            .onDrag { VaultItem(paths: dragged()).itemProvider }
             .onDrop(of: FileDrop.acceptedTypes, delegate: TreeDropDelegate(
                 app: app, indicator: $indicator,
                 target: { location in RowDrag.target(for: location, node: node, depth: depth, isOpen: isOpen, next: nextSibling) }))
