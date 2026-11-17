@@ -17,7 +17,7 @@ public struct VaultItem: Codable, Transferable {
 }
 
 extension VaultItem {
-    /// For List rows, which drag through an item provider (on iPad, `.draggable` rows don't start a drag).
+    /// The private representation keeps sidebar moves distinct from external file imports.
     public var itemProvider: NSItemProvider {
         let provider = NSItemProvider()
         let data = (try? JSONEncoder().encode(self)) ?? Data()
@@ -79,6 +79,14 @@ public enum FileDrop {
         return files ? .files : .nothing
     }
 
+    public static func operation(for providers: [NSItemProvider], into folder: String?) -> DropOperation {
+        switch classify(providers) {
+        case .vaultItems: return folder == nil ? .forbidden : .move
+        case .files: return .copy
+        case .nothing: return .forbidden
+        }
+    }
+
     /// The paths of dragged sidebar rows.
     public static func vaultPaths(in providers: [NSItemProvider]) async -> [String] {
         var paths: [String] = []
@@ -110,9 +118,9 @@ public enum FileDrop {
     static func handle(_ providers: [NSItemProvider], app: AppModel, into folder: String?) -> Bool {
         switch classify(providers) {
         case .vaultItems:
-            guard let folder else { return false }
+            guard let folder, let session = app.session else { return false }
             Task { @MainActor in
-                for path in await vaultPaths(in: providers) { app.session?.move(path, into: folder) }
+                for path in await vaultPaths(in: providers) { session.move(path, into: folder) }
             }
             return true
         case .files:
@@ -124,6 +132,30 @@ public enum FileDrop {
         case .nothing:
             return false
         }
+    }
+}
+
+/// Explicit proposals give internal drags a move cursor and keep them off the window import target.
+struct FileDropTarget: DropDelegate {
+    let app: AppModel
+    let folder: String?
+    @Binding var targeted: Bool
+
+    func validateDrop(info: DropInfo) -> Bool {
+        FileDrop.operation(for: info.itemProviders(for: FileDrop.acceptedTypes), into: folder) != .forbidden
+    }
+
+    func dropEntered(info: DropInfo) { targeted = validateDrop(info: info) }
+    func dropExited(info: DropInfo) { targeted = false }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: FileDrop.operation(for: info.itemProviders(for: FileDrop.acceptedTypes), into: folder))
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        targeted = false
+        guard validateDrop(info: info) else { return false }
+        return FileDrop.handle(info.itemProviders(for: FileDrop.acceptedTypes), app: app, into: folder)
     }
 }
 

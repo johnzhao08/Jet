@@ -70,6 +70,19 @@ Testers in an internal TestFlight group with automatic distribution get it after
 Syncs two simulated devices through a local bare repository (fast-forward, merge, text conflict,
 ink merge, deletion), and clones a public repository over HTTPS.
 
+Run the drag-and-drop UI regressions with Xcode and XcodeGen installed:
+
+```sh
+./ui-test.sh mac
+./ui-test.sh ipad
+```
+
+The iPad command defaults to the iPad Pro 11-inch (M5) simulator. Pass another
+`xcodebuild` destination as the second argument to select a different simulator.
+Each test launches a Debug-only isolated vault, performs native drag gestures, and
+checks the move survives relaunch. Results, including failure screenshots and UI
+hierarchies, are saved under `build/UIResults-*.xcresult`.
+
 ## Layout
 
 - `JetKit/` Swift package with all app code (`AI/`, `Git/`, `Model/`, `Views/`)

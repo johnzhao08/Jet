@@ -471,6 +471,8 @@ do {
                "moving a folder moves what's inside, and the open note follows")
         expect(session.move("Course", into: "Course") == nil && session.exists("Course"), "a folder can't move into itself")
         expect(session.move("Daily/Welcome 2.md", into: "Daily") == nil, "dropping on its own folder does nothing")
+        expect(session.move("Daily/Welcome 2.md", into: "") == "Welcome 2.md"
+               && !session.exists("Daily/Welcome 2.md"), "a nested note moves to the top level without leaving a copy")
     }
 } catch {
     failures += 1
@@ -484,6 +486,11 @@ do {
     let finder = NSItemProvider(contentsOf: file)!
     let row = VaultItem(path: "Welcome.md").itemProvider
     expect(FileDrop.classify([row]) == .vaultItems, "a dragged sidebar row is a move, never an import")
+    expect(FileDrop.operation(for: [row], into: "Daily") == .move, "a folder drop proposes a move")
+    expect(FileDrop.operation(for: [row], into: "") == .move, "the top-level target proposes a move")
+    expect(FileDrop.operation(for: [row], into: nil) == .forbidden, "the window import target refuses internal drags")
+    expect(FileDrop.operation(for: [finder], into: "") == .copy, "external file drops still propose copying")
+    expect(FileDrop.operation(for: [row, finder], into: "Daily") == .move, "internal drag types take priority over file representations")
     expect(FileDrop.classify([finder]) == .files, "a Finder file is a file")
     expect(FileDrop.classify([NSItemProvider(object: "just text" as NSString)]) == .nothing, "dragged text isn't a file")
     let semaphore = DispatchSemaphore(value: 0)
