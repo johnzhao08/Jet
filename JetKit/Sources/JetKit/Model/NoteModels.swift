@@ -77,6 +77,26 @@ public final class InkNoteModel {
         scheduleSave()
     }
 
+    /// Adds a picture (a vault-relative path) centred on `point`, kept inside `bounds` (the page, or
+    /// one PDF page), at about half its pixel size and never wider than most of the page.
+    public func addPicture(_ path: String, pixelSize: CGSize, at point: CGPoint, within bounds: CGRect) {
+        let frame = Self.pictureFrame(pixelSize: pixelSize, at: point, within: bounds)
+        imagesChanged(images + [InkImage(path: path, frame: frame)])
+    }
+
+    public nonisolated static func pictureFrame(pixelSize: CGSize, at point: CGPoint, within bounds: CGRect) -> CGRect {
+        let natural = CGSize(width: max(pixelSize.width, 1) / 2, height: max(pixelSize.height, 1) / 2)
+        let fit = min(1, 560 / natural.width, 600 / natural.height, (bounds.width - 80) / natural.width)
+        let size = CGSize(width: max(natural.width * fit, 40), height: max(natural.height * fit, 40 * natural.height / natural.width))
+        var origin = CGPoint(x: point.x - size.width / 2, y: point.y - size.height / 2)
+        origin.x = min(max(origin.x, bounds.minX + 16), max(bounds.minX + 16, bounds.maxX - 16 - size.width))
+        origin.y = max(origin.y, bounds.minY + 16)
+        if bounds.height.isFinite {
+            origin.y = min(origin.y, max(bounds.minY + 16, bounds.maxY - 16 - size.height))
+        }
+        return CGRect(origin: origin, size: size)
+    }
+
     private func scheduleSave() {
         dirty = true
         saveTask?.cancel()

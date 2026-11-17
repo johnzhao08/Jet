@@ -1,5 +1,6 @@
 import Foundation
 import CoreGraphics
+import ImageIO
 import PencilKit
 
 /// A PDF laid out for annotating: its pages stacked top to bottom, each scaled to the handwriting
@@ -14,9 +15,37 @@ public final class PDFPages: @unchecked Sendable {
     public let frames: [CGRect]
     public let height: CGFloat
 
-    public init?(url: URL) {
-        guard let document = CGPDFDocument(url as CFURL), document.numberOfPages > 0, !document.isEncrypted || document.isUnlocked
+    public convenience init?(url: URL) {
+        guard let document = CGPDFDocument(url as CFURL) else { return nil }
+        self.init(document: document)
+    }
+
+    /// An image file as a single page, so pictures and ink can go on top of it the way they do on a PDF,
+    /// kept in the same hidden `.Name.png.ink`. The image is wrapped in a PDF in memory; the file is
+    /// never changed.
+    public convenience init?(imageAt url: URL) {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                  kCGImageSourceCreateThumbnailFromImageAlways: true,
+                  kCGImageSourceCreateThumbnailWithTransform: true,   // upright, as photos are shown
+                  kCGImageSourceThumbnailMaxPixelSize: 8192,
+              ] as CFDictionary)
         else { return nil }
+        let data = NSMutableData()
+        var box = CGRect(x: 0, y: 0, width: image.width, height: image.height)
+        guard let consumer = CGDataConsumer(data: data as CFMutableData),
+              let context = CGContext(consumer: consumer, mediaBox: &box, nil) else { return nil }
+        context.beginPDFPage(nil)
+        context.interpolationQuality = .high
+        context.draw(image, in: box)
+        context.endPDFPage()
+        context.closePDF()
+        guard let provider = CGDataProvider(data: data), let document = CGPDFDocument(provider) else { return nil }
+        self.init(document: document)
+    }
+
+    init?(document: CGPDFDocument) {
+        guard document.numberOfPages > 0, !document.isEncrypted || document.isUnlocked else { return nil }
         self.document = document
         var frames: [CGRect] = []
         var y = Self.gap
@@ -121,7 +150,7 @@ public final class PDFPages: @unchecked Sendable {
 }
 
 extension VaultSession {
-    /// Where a PDF's handwritten annotations are kept: a hidden `.Name.pdf.ink` beside it.
+    /// Where a PDF's (or an image file's) annotations are kept: a hidden `.Name.pdf.ink` beside it.
     public nonisolated static func annotationsPath(for path: String) -> String {
         let folder = (path as NSString).deletingLastPathComponent
         let name = "." + (path as NSString).lastPathComponent + ".ink"

@@ -51,6 +51,7 @@ struct VaultView: View {
         // Files dropped anywhere on the window: opened if they're already in a vault, else imported.
         .onDrop(of: FileDrop.acceptedTypes,
                 delegate: FileDropTarget(app: app, folder: nil, targeted: $dropTargeted))
+        .clearsWhenDragEnds($dropTargeted)
         .overlay {
             if dropTargeted {
                 RoundedRectangle(cornerRadius: 12)
@@ -359,6 +360,7 @@ private struct SidebarView: View {
     var body: some View {
         fileList
         .safeAreaInset(edge: .top, spacing: 0) { header }
+        .clearsWhenDragEnds($dropIndicator)
         .onAppear {
             expanded = Set(UserDefaults.standard.stringArray(forKey: expandedKey) ?? [])
             reveal(session.selection)

@@ -67,7 +67,8 @@ struct InkNoteView: View {
                                 Label("Share with Annotations…", systemImage: "square.and.arrow.up")
                             }
                             ShareLink(item: session.url(for: path)) {
-                                Label("Share Original PDF…", systemImage: "doc")
+                                Label(FileKind(path: path) == .pdf ? "Share Original PDF…" : "Share Original…",
+                                      systemImage: "doc")
                             }
                         } else {
                             Picker("Paper", selection: $model.paper) {
@@ -121,15 +122,15 @@ struct InkNoteView: View {
         Group {
             if let pdf {
                 PDFPagesView(pages: pdf, drawing: model.drawing, images: model.images, root: session.root,
-                             generation: model.generation)
+                             generation: model.generation, session: session, place: placePicture)
             } else {
                 InkPagesView(drawing: model.drawing, images: model.images, root: session.root, paper: model.paper,
-                             generation: model.generation)
+                             generation: model.generation, session: session, place: placePicture)
             }
         }
             .safeAreaInset(edge: .bottom) {
-                Label(pdf == nil ? "Handwriting is view-only on the Mac. Write on iPad and sync."
-                                 : "Annotations are view-only on the Mac. Write on the PDF on iPad and sync.",
+                Label(pdf == nil ? "Handwriting is view-only on the Mac (drop in pictures). Write on iPad and sync."
+                                 : "Handwriting is view-only on the Mac (drop in pictures). Write on iPad and sync.",
                       systemImage: "applepencil")
                     .font(.callout)
                     .foregroundStyle(.secondary)
@@ -141,6 +142,20 @@ struct InkNoteView: View {
         #endif
     }
 }
+
+#if os(macOS)
+extension InkNoteView {
+    /// A picture dropped on the page, at that spot (page points), kept inside the page it landed on.
+    private func placePicture(_ path: String, pixelSize: CGSize, at point: CGPoint, within bounds: CGRect) {
+        model.addPicture(path, pixelSize: pixelSize, at: point, within: bounds)
+        model.saveNow()
+    }
+}
+
+/// Where a picture dropped on a page goes: the picture's path and pixel size, the page point it was
+/// dropped on, and the page area it has to stay inside.
+typealias PicturePlacement = (_ path: String, _ pixelSize: CGSize, _ at: CGPoint, _ within: CGRect) -> Void
+#endif
 
 // MARK: - Rendering (shared)
 
@@ -250,6 +265,10 @@ struct InkPagesView: View {
     var root: URL = URL(fileURLWithPath: "/")
     let paper: PaperStyle
     let generation: Int
+    #if os(macOS)
+    var session: VaultSession?
+    var place: PicturePlacement?
+    #endif
 
     @Environment(\.colorScheme) private var colorScheme
     private let tile = InkDocument.pageWidth
@@ -274,6 +293,11 @@ struct InkPagesView: View {
                         )
                         .background(PaperLines(paper: paper, spacing: InkDocument.lineSpacing * scale))
                         .frame(width: geometry.size.width, height: tile * scale)
+                        #if os(macOS)
+                        .modifier(PictureDropTarget(session: session, place: place,
+                                                    origin: CGPoint(x: 0, y: CGFloat(index) * tile), scale: scale,
+                                                    bounds: CGRect(x: 0, y: 0, width: tile, height: .infinity)))
+                        #endif
                     }
                 }
             }
@@ -356,6 +380,10 @@ struct PDFPagesView: View {
     let images: [InkImage]
     let root: URL
     let generation: Int
+    #if os(macOS)
+    var session: VaultSession?
+    var place: PicturePlacement?
+    #endif
 
     var body: some View {
         GeometryReader { geometry in
@@ -366,6 +394,10 @@ struct PDFPagesView: View {
                         PDFPageTile(pages: pages, index: index, drawing: drawing, images: images, root: root,
                                     generation: generation)
                             .frame(width: pages.frames[index].width * scale, height: pages.frames[index].height * scale)
+                            #if os(macOS)
+                            .modifier(PictureDropTarget(session: session, place: place, origin: pages.frames[index].origin,
+                                                        scale: scale, bounds: pages.frames[index]))
+                            #endif
                             .shadow(color: .black.opacity(0.15), radius: 3, y: 1)
                     }
                 }
@@ -401,6 +433,28 @@ private struct PDFPageTile: View {
         }
     }
 }
+
+#if os(macOS)
+/// Makes a page tile take dropped pictures, turning the drop point into page points.
+private struct PictureDropTarget: ViewModifier {
+    let session: VaultSession?
+    let place: PicturePlacement?
+    /// The tile's top-left corner in page points, and view points per page point.
+    let origin: CGPoint
+    let scale: CGFloat
+    let bounds: CGRect
+
+    func body(content: Content) -> some View {
+        if let session, let place {
+            content.onDrop(of: FileDrop.acceptedTypes, delegate: PictureDrop(session: session) { path, pixels, at in
+                place(path, pixels, CGPoint(x: origin.x + at.x / scale, y: origin.y + at.y / scale), bounds)
+            })
+        } else {
+            content
+        }
+    }
+}
+#endif
 
 /// A PDF with its annotations drawn in, made when it's shared.
 struct AnnotatedPDF: Transferable {

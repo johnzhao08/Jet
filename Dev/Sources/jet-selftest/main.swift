@@ -516,6 +516,44 @@ do {
     expect(FileDrop.classify(types: ["com.johnzhao.jet.vault-item", "public.file-url"]) == .vaultItems, "rows still win by type")
     expect(FileDrop.operation(for: FileDrop.classify(types: browserImage), into: nil) == .copy, "the window accepts a browser image")
 
+    // A picture dropped on a handwritten page or a PDF page: centred where it lands, kept on that page.
+    let page = CGRect(x: 0, y: 0, width: InkDocument.pageWidth, height: .infinity)
+    let dropped = InkNoteModel.pictureFrame(pixelSize: CGSize(width: 400, height: 300), at: CGPoint(x: 300, y: 900), within: page)
+    expect(dropped == CGRect(x: 200, y: 825, width: 200, height: 150), "a dropped picture is centred on the drop at half its pixel size")
+    let huge = InkNoteModel.pictureFrame(pixelSize: CGSize(width: 8000, height: 6000), at: CGPoint(x: 5, y: 5), within: page)
+    expect(huge.width <= 560 && huge.minX >= 16 && huge.minY >= 16, "a big photo is scaled down and kept inside the page")
+    let pdfPage = CGRect(x: 0, y: 1000, width: InkDocument.pageWidth, height: 1000)
+    let low = InkNoteModel.pictureFrame(pixelSize: CGSize(width: 400, height: 400), at: CGPoint(x: 300, y: 1990), within: pdfPage)
+    expect(low.maxY <= pdfPage.maxY - 16, "a picture dropped at a PDF page's bottom edge stays on that page")
+
+    // An image file opens as one page to put pictures on, shaped like the image; the file isn't touched.
+    let photo = work.appendingPathComponent("Photo.png")
+    let tiny = CGContext(data: nil, width: 300, height: 150, bitsPerComponent: 8, bytesPerRow: 0,
+                         space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+    tiny.setFillColor(CGColor(red: 1, green: 0, blue: 0, alpha: 1))
+    tiny.fill(CGRect(x: 0, y: 0, width: 300, height: 150))
+    let photoDest = CGImageDestinationCreateWithURL(photo as CFURL, "public.png" as CFString, 1, nil)!
+    CGImageDestinationAddImage(photoDest, tiny.makeImage()!, nil)
+    CGImageDestinationFinalize(photoDest)
+    let photoBytes = try Data(contentsOf: photo)
+    let photoPage = PDFPages(imageAt: photo)
+    expect(photoPage?.count == 1 && abs((photoPage?.frames[0].height ?? 0) - InkDocument.pageWidth / 2) < 1,
+           "an image file opens as one page with the image's shape")
+    expect(PDFPages(imageAt: work.appendingPathComponent("Dropped note.md")) == nil, "a file that isn't an image doesn't")
+    expect((try? Data(contentsOf: photo)) == photoBytes, "opening an image as a page leaves the file as it was")
+    expect(VaultSession.annotationsPath(for: "Pics/Photo.png") == "Pics/.Photo.png.ink", "its pictures live in a hidden sidecar")
+
+    // What a Markdown note takes in: pictures only. Other files fall through to the window's import.
+    expect(FileDrop.carriesImage(types: browserImage, fileURLs: []), "a note takes a browser image")
+    expect(FileDrop.carriesImage(types: ["public.png"], fileURLs: []), "a note takes image data")
+    expect(FileDrop.carriesImage(types: ["public.file-url"], fileURLs: [URL(fileURLWithPath: "/tmp/Photo.HEIC")]),
+           "a note takes an image file from Finder")
+    expect(!FileDrop.carriesImage(types: ["public.file-url"], fileURLs: [URL(fileURLWithPath: "/tmp/notes.pdf")]),
+           "a PDF from Finder isn't put in the note")
+    expect(!FileDrop.carriesImage(types: ["public.utf8-plain-text", "public.url"], fileURLs: []), "nor is a link")
+    expect(!FileDrop.carriesImage(types: ["com.johnzhao.jet.vault-item", "public.png"], fileURLs: []),
+           "nor a sidebar row")
+
     // Dropped: the image is read out of the provider, not its web address.
     let jpeg = work.appendingPathComponent("web-image-source")
     try Data([0xFF, 0xD8, 0xFF, 0xE0, 1, 2, 3]).write(to: jpeg)

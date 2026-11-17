@@ -98,6 +98,28 @@ public enum FileDrop {
         return files ? .files : .nothing
     }
 
+    /// Whether a drag holds a picture: image data, a promised file (browsers drag web images that way;
+    /// anything that turns out not to be a picture is skipped on drop), or image files from Finder.
+    public static func carriesImage(types: [String], fileURLs: [URL]) -> Bool {
+        if types.contains(UTType.jetVaultItem.identifier) { return false }
+        if types.contains(where: promiseTypes.contains) { return true }
+        if types.contains(where: { identifier in
+            guard let type = UTType(identifier), !type.isDynamic else { return false }
+            return type.conforms(to: .image)
+        }) { return true }
+        return fileURLs.contains { UTType(filenameExtension: $0.pathExtension)?.conforms(to: .image) == true }
+    }
+
+    #if os(macOS)
+    /// The file URLs on the drag, read from its pasteboard without loading any promised files.
+    @MainActor
+    static func draggedFileURLs() -> [URL] {
+        let urls = NSPasteboard(name: .drag).readObjects(forClasses: [NSURL.self],
+                                                         options: [.urlReadingFileURLsOnly: true]) as? [URL]
+        return urls ?? []
+    }
+    #endif
+
     public static func operation(for providers: [NSItemProvider], into folder: String?) -> DropOperation {
         operation(for: classify(providers), into: folder)
     }
@@ -221,6 +243,35 @@ extension DropInfo {
         NSPasteboard(name: .drag).types?.map(\.rawValue) ?? []
         #else
         itemProviders(for: FileDrop.acceptedTypes).flatMap(\.registeredTypeIdentifiers)
+        #endif
+    }
+}
+
+extension View {
+    /// Takes drag feedback (an insertion line, a highlighted target) down once the mouse button is up.
+    /// SwiftUI doesn't always tell a drop target that the drag left (a drop on a different target, or
+    /// rows rebuilt during the drag), which left the line on screen after the drop.
+    func clearsWhenDragEnds<T>(_ feedback: Binding<T?>) -> some View {
+        clearsWhenDragEnds(active: feedback.wrappedValue != nil) { feedback.wrappedValue = nil }
+    }
+
+    func clearsWhenDragEnds(_ feedback: Binding<Bool>) -> some View {
+        clearsWhenDragEnds(active: feedback.wrappedValue) { feedback.wrappedValue = false }
+    }
+
+    private func clearsWhenDragEnds(active: Bool, clear: @escaping () -> Void) -> some View {
+        #if os(macOS)
+        task(id: active) {
+            guard active else { return }
+            // While dragging, the button is held; the drag ends (dropped or cancelled) when it's let go.
+            while NSEvent.pressedMouseButtons & 1 != 0 {
+                try? await Task.sleep(for: .milliseconds(120))
+                if Task.isCancelled { return }
+            }
+            clear()
+        }
+        #else
+        self
         #endif
     }
 }

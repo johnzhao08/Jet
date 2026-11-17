@@ -31,7 +31,9 @@ struct NoteDetailView: View {
                     // Locked or damaged: Quick Look can still show it (and ask for a password).
                     FilePreview(url: session.url(for: path))
                 }
-            case .image, .text, .other:
+            case .image:
+                ImageFileView(session: session, path: path)
+            case .text, .other:
                 FilePreview(url: session.url(for: path))
                     .toolbar {
                         ToolbarItem(placement: .primaryAction) {
@@ -44,6 +46,41 @@ struct NoteDetailView: View {
         }
         .navigationTitle(title)
         .inlineTitle()
+    }
+}
+
+/// An image file, opened as a page to put pictures (and, on iPad, ink) on, like a PDF; the image file
+/// itself never changes. Formats ImageIO can't read, like SVG, fall back to Quick Look.
+private struct ImageFileView: View {
+    let session: VaultSession
+    let path: String
+    @State private var page: PDFPages?
+    @State private var loaded = false
+
+    var body: some View {
+        Group {
+            if let page {
+                InkNoteView(session: session, path: path, pdf: page)
+            } else if loaded {
+                FilePreview(url: session.url(for: path))
+                    .toolbar {
+                        ToolbarItem(placement: .primaryAction) {
+                            ShareLink(item: session.url(for: path)) {
+                                Label("Share", systemImage: "square.and.arrow.up")
+                            }
+                        }
+                    }
+            } else {
+                ProgressView()
+            }
+        }
+        .task(id: path) {
+            loaded = false
+            let url = session.url(for: path)
+            // Wrapping a big photo takes a moment: do it off the main thread, once per file.
+            page = await Task.detached(priority: .userInitiated) { PDFPages(imageAt: url) }.value
+            loaded = true
+        }
     }
 }
 

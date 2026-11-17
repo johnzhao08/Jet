@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Markdown note: source editor and rendered reading view, toggled with ⌘E.
 struct MarkdownNoteView: View {
@@ -38,14 +39,12 @@ struct MarkdownNoteView: View {
                     }
             }
         }
-        .imageInsertion($imageSource, session: session) { path, _ in
-            let embed = "![[\(session.linkTarget(for: path))]]"
-            if reading {
-                model.text = TextInsertion.appending(embed, to: model.text)
-            } else {
-                insertion = embed
-            }
-        }
+        .imageInsertion($imageSource, session: session) { path, _ in embed(path) }
+        #if os(macOS)
+        // Pictures dropped on the note go into it (saved in Attachments); other files fall through to
+        // the window, which imports them, as does the sidebar.
+        .onDrop(of: FileDrop.acceptedTypes, delegate: PictureDrop(session: session) { path, _, _ in embed(path) })
+        #endif
         .toolbar {
             if VaultSession.dailyDate(of: path) != nil {
                 ToolbarItemGroup(placement: .primaryAction) {
@@ -88,6 +87,16 @@ struct MarkdownNoteView: View {
         .onChange(of: session.contentVersion) { model.reloadIfChangedOnDisk() }
     }
 
+    /// Puts a picture's embed at the cursor (or at the end while reading).
+    private func embed(_ imagePath: String) {
+        let embed = "![[\(session.linkTarget(for: imagePath))]]"
+        if reading {
+            model.text = TextInsertion.appending(embed, to: model.text)
+        } else {
+            insertion = embed
+        }
+    }
+
     private func open(_ path: String?) {
         if let path { session.selection = path }
     }
@@ -102,6 +111,43 @@ struct MarkdownNoteView: View {
             : days.first { $0.localizedStandardCompare(path) == .orderedDescending }
     }
 }
+
+#if os(macOS)
+/// Pictures dragged onto a note, a handwritten page or a PDF: from Finder, a browser, Photos or another
+/// app. Each is saved in `Attachments/`, then handed over with its pixel size and where it was dropped
+/// (in the view's coordinates; several pictures step down and right from there).
+struct PictureDrop: DropDelegate {
+    let session: VaultSession
+    let insert: (_ path: String, _ pixelSize: CGSize, _ at: CGPoint) -> Void
+
+    /// Decided from the drag's types alone, like every drop check during a drag (see `FileDrop`).
+    func validateDrop(info: DropInfo) -> Bool {
+        FileDrop.carriesImage(types: info.draggedTypes, fileURLs: FileDrop.draggedFileURLs())
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: validateDrop(info: info) ? .copy : .forbidden)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        guard validateDrop(info: info) else { return false }
+        let providers = info.itemProviders(for: FileDrop.acceptedTypes)
+        var point = info.location
+        Task { @MainActor in
+            for url in await FileDrop.fileURLs(in: providers) {
+                guard let type = UTType(filenameExtension: url.pathExtension), type.conforms(to: .image),
+                      let data = try? Data(contentsOf: url),
+                      let path = session.addImage(data, type: type, named: url.deletingPathExtension().lastPathComponent)
+                else { continue }
+                insert(path, ImageFiles.pixelSize(of: session.url(for: path)) ?? CGSize(width: 800, height: 600), point)
+                point.x += 24
+                point.y += 24
+            }
+        }
+        return true
+    }
+}
+#endif
 
 /// The source editor, with the cursor tracked so pictures go in where you're typing.
 @available(iOS 18.0, macOS 15.0, *)
