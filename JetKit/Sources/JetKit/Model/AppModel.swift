@@ -49,9 +49,16 @@ public final class AppModel {
             let root = ref.url
             #endif
             do {
+                // Earlier runs' vaults are just clutter.
+                let parent = root.deletingLastPathComponent()
+                for old in (try? FileManager.default.contentsOfDirectory(atPath: parent.path)) ?? []
+                where old.hasPrefix("JetUITest-") && old != name {
+                    try? FileManager.default.removeItem(at: parent.appendingPathComponent(old))
+                }
                 if !FileManager.default.fileExists(atPath: root.path) {
                     try FileManager.default.createDirectory(at: root.appendingPathComponent("Folder"), withIntermediateDirectories: true)
                     try "# Root\n".write(to: root.appendingPathComponent("Root.md"), atomically: true, encoding: .utf8)
+                    try "# Another\n".write(to: root.appendingPathComponent("Another.md"), atomically: true, encoding: .utf8)
                     try "# Nested\n".write(to: root.appendingPathComponent("Folder/Nested.md"), atomically: true, encoding: .utf8)
                 }
                 vaults = [ref]

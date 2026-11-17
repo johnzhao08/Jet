@@ -567,5 +567,61 @@ do {
     print("  FAIL  threw: \(error.localizedDescription)")
 }
 
+print("17. Sorting, manual order and Clean Up")
+do {
+    let vault = work.appendingPathComponent("order")
+    try fm.createDirectory(at: vault.appendingPathComponent("Course"), withIntermediateDirectories: true)
+    for (name, age) in [("b.md", 30.0), ("a.md", 10.0), ("c.ink", 20.0), ("Course/x.md", 5.0), ("Course/y.md", 1.0)] {
+        let url = vault.appendingPathComponent(name)
+        try "x".write(to: url, atomically: true, encoding: .utf8)
+        try fm.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -age * 60)], ofItemAtPath: url.path)
+    }
+    MainActor.assumeIsolated {
+        let session = VaultSession(ref: VaultRef(name: "order", location: vault.path))
+        func top() -> [String] { MainActor.assumeIsolated { session.tree.map(\.fileName) } }
+        session.sortMode = .name
+        expect(top() == ["Course", "a.md", "b.md", "c.ink"], "by name: folders first, then names")
+        session.sortMode = .modified
+        expect(top() == ["Course", "a.md", "c.ink", "b.md"], "by date: newest first")
+        session.sortMode = .kind
+        expect(top() == ["Course", "c.ink", "a.md", "b.md"], "by kind: grouped by type")
+
+        session.sortMode = .name
+        session.place("c.ink", before: "a.md")
+        expect(session.sortMode == .manual && top() == ["Course", "c.ink", "a.md", "b.md"],
+               "dragging between rows switches to manual order, starting from what was shown")
+        session.place("Course", before: nil)
+        expect(top() == ["c.ink", "a.md", "b.md", "Course"], "in manual order folders can go anywhere")
+        session.nudge("b.md", by: -1)
+        expect(top() == ["c.ink", "b.md", "a.md", "Course"], "Move Up swaps with the row above")
+        session.nudge("c.ink", by: 1)
+        expect(top() == ["b.md", "c.ink", "a.md", "Course"], "Move Down swaps with the row below")
+
+        session.move("a.md", into: "Course", before: "Course/x.md")
+        expect(session.children(of: "Course").map(\.fileName) == ["a.md", "x.md", "y.md"] && top() == ["b.md", "c.ink", "Course"],
+               "moving into a folder between rows places it there and leaves the old folder's order intact")
+        session.move("Course/y.md", into: "", before: "c.ink")
+        expect(top() == ["b.md", "y.md", "c.ink", "Course"], "dragging out of a folder puts it at that spot on the top level")
+        session.rename("b.md", to: "Bee")
+        expect(top() == ["Bee.md", "y.md", "c.ink", "Course"], "renaming keeps an item's place")
+        session.createNote(kind: .markdown, in: "", named: "New")
+        expect(top().last == "New.md", "new notes go after the arranged ones")
+        session.delete("y.md")
+        expect(top() == ["Bee.md", "c.ink", "Course", "New.md"], "deleting removes it from the order")
+
+        let reopened = VaultSession(ref: VaultRef(name: "order", location: vault.path))
+        reopened.sortMode = .manual
+        expect(reopened.tree.map(\.fileName) == top(), "manual order is saved in the vault and comes back")
+        expect(!reopened.tree.contains { $0.fileName == ".jet" }, "the order file is hidden from the sidebar")
+
+        session.cleanUp(by: .name)
+        expect(session.sortMode == .manual && top() == ["Course", "Bee.md", "c.ink", "New.md"]
+               && session.children(of: "Course").map(\.fileName) == ["a.md", "x.md"], "Clean Up By Name tidies every folder")
+    }
+} catch {
+    failures += 1
+    print("  FAIL  threw: \(error.localizedDescription)")
+}
+
 print(failures == 0 ? "\nAll checks passed." : "\n\(failures) check(s) failed.")
 exit(failures == 0 ? 0 : 1)
