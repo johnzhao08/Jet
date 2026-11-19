@@ -9,6 +9,16 @@ struct MarkdownNoteView: View {
     @State private var model: MarkdownNoteModel
     @State private var editorID: UUID?
     @AppStorage("jet.markdown.reading") private var reading = false
+    @Environment(\.openURL) private var openURL
+    @AppStorage("jet.markdown.fontSize") private var fontSize = 15.0
+    @State private var completion: MarkdownCompletion?
+    @State private var action: MarkdownEditorAction?
+    @State private var output: MarkdownOutputRequest?
+    @State private var pdf: MarkdownPDFDocument?
+    @State private var exporting = false
+    @State private var message: String?
+    @State private var unlinked: [SearchHit] = []
+    @State private var inspector = false
     @State private var imageSource: ImageSource?
     /// Text waiting to go in at the cursor (a picture's embed).
     @State private var insertion: String?
@@ -23,10 +33,17 @@ struct MarkdownNoteView: View {
         @Bindable var model = model
         Group {
             if reading {
-                MarkdownPreview(session: session, model: model, path: path)
+                MarkdownReader(session: session, model: model, path: path, text: model.text, version: session.contentVersion,
+                               fontSize: fontSize, jump: session.headingJump, output: output, follow: follow) { result in
+                    switch result {
+                    case .success(let data): pdf = MarkdownPDFDocument(data); exporting = true
+                    case .failure(let error): message = error.localizedDescription
+                    }
+                }
             } else {
                 #if os(macOS)
-                MarkdownTextView(text: $model.text, insertion: $insertion, image: { embed in
+                MarkdownTextView(text: $model.text, insertion: $insertion, action: action, fontSize: fontSize,
+                                 completion: { completion = $0 }, follow: { follow($0, path) }, image: { embed in
                     guard let file = session.embeddedFile(embed, inNote: path),
                           FileKind(path: file) == .image else { return nil }
                     return session.url(for: file)
@@ -40,10 +57,29 @@ struct MarkdownNoteView: View {
                     }
                 }
                 #else
-                sourceEditor
+                MarkdownPadEditor(text: $model.text, insertion: $insertion, action: action,
+                                  fontSize: fontSize, completion: { completion = $0 })
                 #endif
             }
         }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if !reading, let completion, !suggestions(for: completion).isEmpty {
+                ScrollView(.horizontal) {
+                    HStack {
+                        ForEach(suggestions(for: completion), id: \.self) { suggestion in
+                            Button(suggestion) { action = MarkdownEditorAction(kind: .complete(completion, suggestion)) }
+                        }
+                    }.padding(8)
+                }.background(.bar)
+            }
+        }
+        .fileExporter(isPresented: $exporting, document: pdf, contentType: .pdf,
+                      defaultFilename: ((path as NSString).lastPathComponent as NSString).deletingPathExtension) { result in
+            if case .failure(let error) = result { message = error.localizedDescription }
+        }
+        .alert("Markdown note", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {
+            Button("OK") { message = nil }
+        } message: { Text(message ?? "") }
         .imageInsertion($imageSource, session: session) { path, _ in embed(path) }
         #if os(macOS)
         // In the reading view, pictures dropped on the note go into it (saved in Attachments); the
@@ -68,11 +104,26 @@ struct MarkdownNoteView: View {
             }
             ToolbarItem(placement: .primaryAction) {
                 Menu {
+                    if !reading {
+                        Button("Bold") { action = MarkdownEditorAction(kind: .wrap("**")) }.keyboardShortcut("b")
+                        Button("Italic") { action = MarkdownEditorAction(kind: .wrap("*")) }.keyboardShortcut("i")
+                        Divider()
+                    }
+                    Picker("Font size", selection: $fontSize) {
+                        ForEach([12.0, 15, 18, 21, 24], id: \.self) { size in Text("\(Int(size)) pt").tag(size) }
+                    }
+                    Button("Export PDF…") { requestOutput(printDialog: false) }
+                    Button("Print…") { requestOutput(printDialog: true) }.keyboardShortcut("p")
+                    Divider()
                     ImageSourceButtons(source: $imageSource)
                 } label: {
-                    Label("Insert picture", systemImage: "photo.badge.plus")
+                    Label("Note actions", systemImage: "ellipsis.circle")
                 }
-                .help("Add a picture to the note (saved in Attachments)")
+                .help("Formatting, print, export and pictures")
+            }
+            ToolbarItem(placement: .primaryAction) {
+                Button { inspector.toggle() } label: { Label("Outline and backlinks", systemImage: "list.bullet.indent") }
+                    .popover(isPresented: $inspector) { navigationInspector }
             }
             ToolbarItem(placement: .primaryAction) {
                 Button { reading.toggle() } label: {
@@ -83,6 +134,7 @@ struct MarkdownNoteView: View {
             }
         }
         .onAppear {
+            revealEditorHeading()
             model.onWrite = { session.didWriteFile() }
             editorID = session.registerEditor { model.saveNow() }
         }
@@ -90,29 +142,71 @@ struct MarkdownNoteView: View {
             model.saveNow()
             session.unregisterEditor(editorID)
         }
+        .onChange(of: session.headingJump) { revealEditorHeading() }
+        .task(id: session.indexVersion) { unlinked = await session.unlinkedMentions(of: path) }
         .onChange(of: session.contentVersion) { model.reloadIfChangedOnDisk() }
     }
 
-    /// iPad's source editor.
-    @ViewBuilder
-    private var sourceEditor: some View {
-        @Bindable var model = model
-        Group {
-            if #available(iOS 18.0, macOS 15.0, *) {
-                CursorTextEditor(text: $model.text, insertion: $insertion)
-            } else {
-                TextEditor(text: $model.text)
-                    .font(.system(.body, design: .monospaced))
-                    .scrollContentBackground(.hidden)
-                    .padding(.horizontal, 12)
-                    .padding(.top, 8)
-                    .onChange(of: insertion) { _, snippet in
-                        guard let snippet else { return }
-                        insertion = nil
-                        model.text = TextInsertion.appending(snippet, to: model.text)
-                    }
-            }
+    private func requestOutput(printDialog: Bool) {
+        reading = true
+        output = MarkdownOutputRequest(printDialog: printDialog)
+    }
+
+    private func follow(_ target: String, _ source: String) {
+        if let url = URL(string: target), let scheme = url.scheme {
+            if ["http", "https", "mailto"].contains(scheme.lowercased()) { openURL(url) }
+            return
         }
+        let decoded = target.removingPercentEncoding ?? target
+        let parts = decoded.components(separatedBy: "#")
+        let name = parts[0]
+        let resolved = name.isEmpty ? source : (session.file(name, relativeTo: source) ?? session.resolve(name, from: source))
+        let suffix = parts.count > 1 ? "#" + parts.dropFirst().joined(separator: "#") : ""
+        // A resolved path is vault-relative; openLink resolves again from the open note, so mark it as rooted.
+        session.openLink((resolved.map { "/" + $0 } ?? name) + suffix)
+    }
+
+    private func revealEditorHeading() {
+        guard !reading, let jump = session.headingJump, jump.path == path,
+              let heading = MarkdownHeading.outline(model.text).first(where: { $0.title.caseInsensitiveCompare(jump.heading) == .orderedSame }) else { return }
+        action = MarkdownEditorAction(kind: .reveal(heading.range))
+    }
+
+    private func suggestions(for completion: MarkdownCompletion) -> [String] {
+        if completion.isLink {
+            let matches = session.allNotes.filter { completion.query.isEmpty || $0.path.localizedCaseInsensitiveContains(completion.query) }
+            return matches.prefix(8).map { session.linkText(for: $0, from: path) }
+        }
+        return Array(session.index.tags.keys.filter { completion.query.isEmpty || $0.localizedCaseInsensitiveContains(completion.query) }.sorted().prefix(8))
+    }
+
+    private var navigationInspector: some View {
+        List {
+            Section("Outline") {
+                let headings = MarkdownHeading.outline(model.text)
+                if headings.isEmpty { Text("No headings").foregroundStyle(.secondary) }
+                ForEach(headings) { heading in
+                    Button(heading.title) {
+                        inspector = false
+                        session.headingJump = MarkdownHeadingJump(path: path, heading: heading.title)
+                    }.padding(.leading, CGFloat(heading.level - 1) * 8)
+                }
+            }
+            Section("Linked from") {
+                let backlinks = (session.index.backlinks[path] ?? []).sorted()
+                if backlinks.isEmpty { Text("No backlinks").foregroundStyle(.secondary) }
+                ForEach(backlinks, id: \.self) { source in Button(source) { inspector = false; session.selection = source } }
+            }
+            if !unlinked.isEmpty {
+                Section("Mentioned in (not linked)") {
+                    ForEach(unlinked) { hit in
+                        UnlinkedMentionRow(hit: hit) { inspector = false; session.selection = hit.path } link: {
+                            session.linkMention(in: hit.path, to: path)
+                        }
+                    }
+                }
+            }
+        }.frame(minWidth: 280, idealWidth: 320, minHeight: 280, idealHeight: 420)
     }
 
     /// Puts a picture's embed at the cursor (or at the end while reading).
@@ -177,43 +271,6 @@ struct PictureDrop: DropDelegate {
 }
 #endif
 
-/// The source editor, with the cursor tracked so pictures go in where you're typing.
-@available(iOS 18.0, macOS 15.0, *)
-struct CursorTextEditor: View {
-    @Binding var text: String
-    @Binding var insertion: String?
-    @State private var selection: TextSelection?
-
-    var body: some View {
-        TextEditor(text: $text, selection: $selection)
-            .font(.system(.body, design: .monospaced))
-            .scrollContentBackground(.hidden)
-            .padding(.horizontal, 12)
-            .padding(.top, 8)
-            .onChange(of: insertion) { _, snippet in
-                guard let snippet else { return }
-                insertion = nil
-                insert(snippet)
-            }
-    }
-
-    private func insert(_ snippet: String) {
-        guard case .selection(let range)? = selection?.indices,
-              range.lowerBound >= text.startIndex, range.upperBound <= text.endIndex else {
-            text = TextInsertion.appending(snippet, to: text)
-            return
-        }
-        // An embed needs a line of its own.
-        let before = range.lowerBound == text.startIndex || text[text.index(before: range.lowerBound)] == "\n" ? "" : "\n"
-        let after = range.upperBound == text.endIndex || text[range.upperBound] == "\n" ? "" : "\n"
-        let piece = before + snippet + after
-        let offset = text.distance(from: text.startIndex, to: range.lowerBound) + piece.count
-        text.replaceSubrange(range, with: piece)
-        let cursor = text.index(text.startIndex, offsetBy: min(offset, text.count))
-        selection = TextSelection(insertionPoint: cursor)
-    }
-}
-
 enum TextInsertion {
     /// `snippet` on a new line at the end of `text`.
     static func appending(_ snippet: String, to text: String) -> String {
@@ -221,335 +278,25 @@ enum TextInsertion {
     }
 }
 
-// MARK: - Parsing
-
-struct MarkdownBlock: Identifiable {
-    enum Kind {
-        case heading(level: Int, text: String)
-        case paragraph(String)
-        case bullet(indent: Int, text: String)
-        case ordered(indent: Int, marker: String, text: String)
-        case task(indent: Int, done: Bool, text: String)
-        case quote(String)
-        case code(String)
-        case embed(String)
-        case properties([NoteSyntax.Property])
-        case rule
-    }
-
-    /// Index of the block's first source line.
-    let id: Int
-    let kind: Kind
-
-    static func parse(_ source: String) -> [MarkdownBlock] {
-        var blocks: [MarkdownBlock] = []
-        var paragraph: [String] = []
-        var paragraphStart = 0
-        var code: [String]?
-        var codeStart = 0
-        let frontmatter = NoteSyntax.frontmatter(in: source)
-        if frontmatter.lineCount > 0, !frontmatter.properties.isEmpty {
-            blocks.append(MarkdownBlock(id: 0, kind: .properties(frontmatter.properties)))
-        }
-
-        func flush() {
-            guard !paragraph.isEmpty else { return }
-            blocks.append(MarkdownBlock(id: paragraphStart, kind: .paragraph(paragraph.joined(separator: "\n"))))
-            paragraph = []
-        }
-
-        for (index, rawLine) in source.components(separatedBy: "\n").enumerated() where index >= frontmatter.lineCount {
-            let line = rawLine.hasSuffix("\r") ? String(rawLine.dropLast()) : rawLine
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-
-            if trimmed.hasPrefix("```") {
-                if let lines = code {
-                    blocks.append(MarkdownBlock(id: codeStart, kind: .code(lines.joined(separator: "\n"))))
-                    code = nil
-                } else {
-                    flush()
-                    code = []
-                    codeStart = index
-                }
-                continue
-            }
-            if code != nil {
-                code?.append(line)
-                continue
-            }
-
-            let indent = line.prefix { $0 == " " || $0 == "\t" }.reduce(0) { $0 + ($1 == "\t" ? 4 : 1) } / 2
-
-            if trimmed.isEmpty {
-                flush()
-            } else if let match = trimmed.wholeMatch(of: #/(#{1,6})\s+(.*)/#) {
-                flush()
-                blocks.append(MarkdownBlock(id: index, kind: .heading(level: match.1.count, text: String(match.2))))
-            } else if trimmed.wholeMatch(of: #/(-{3,}|\*{3,}|_{3,})/#) != nil {
-                flush()
-                blocks.append(MarkdownBlock(id: index, kind: .rule))
-            } else if let match = trimmed.wholeMatch(of: #/!\[\[([^\]]+)\]\]/#) {
-                flush()
-                blocks.append(MarkdownBlock(id: index, kind: .embed(String(match.1))))
-            } else if let match = trimmed.wholeMatch(of: #/!\[[^\]]*\]\(<?([^)>]+?)>?(?:\s+"[^"]*")?\)/#) {
-                // Standard Markdown image: ![alt](path or URL)
-                flush()
-                blocks.append(MarkdownBlock(id: index, kind: .embed(String(match.1))))
-            } else if let match = trimmed.wholeMatch(of: #/[-*+]\s+\[([ xX])\]\s+(.*)/#) {
-                flush()
-                blocks.append(MarkdownBlock(id: index, kind: .task(indent: indent, done: match.1 != " ", text: String(match.2))))
-            } else if let match = trimmed.wholeMatch(of: #/[-*+]\s+(.*)/#) {
-                flush()
-                blocks.append(MarkdownBlock(id: index, kind: .bullet(indent: indent, text: String(match.1))))
-            } else if let match = trimmed.wholeMatch(of: #/(\d+[.)])\s+(.*)/#) {
-                flush()
-                blocks.append(MarkdownBlock(id: index, kind: .ordered(indent: indent, marker: String(match.1), text: String(match.2))))
-            } else if let match = trimmed.wholeMatch(of: #/>\s?(.*)/#) {
-                flush()
-                if case .quote(let previous)? = blocks.last?.kind, let last = blocks.last {
-                    blocks[blocks.count - 1] = MarkdownBlock(id: last.id, kind: .quote(previous + "\n" + String(match.1)))
-                } else {
-                    blocks.append(MarkdownBlock(id: index, kind: .quote(String(match.1))))
-                }
-            } else {
-                if paragraph.isEmpty { paragraphStart = index }
-                paragraph.append(trimmed)
-            }
-        }
-        if let lines = code {
-            blocks.append(MarkdownBlock(id: codeStart, kind: .code(lines.joined(separator: "\n"))))
-        }
-        flush()
-        return blocks
-    }
-
-    /// Inline Markdown, with `[[wikilinks]]` turned into `jet://note/…` links and `#tags` into `jet://tag/…` links.
-    /// Text inside `inline code` is left alone.
-    static func inline(_ text: String) -> AttributedString {
-        let linked = text.split(separator: "`", omittingEmptySubsequences: false).enumerated().map { index, part in
-            index.isMultiple(of: 2) ? linkify(String(part)) : String(part)
-        }.joined(separator: "`")
-        let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        return (try? AttributedString(markdown: linked, options: options)) ?? AttributedString(text)
-    }
-
-    private static func linkify(_ text: String) -> String {
-        let withLinks = text.replacing(#/\[\[([^\]]+)\]\]/#) { match -> String in
-            let parts = match.1.split(separator: "|", maxSplits: 1).map(String.init)
-            let target = parts.first ?? ""
-            let label = parts.count > 1 ? parts[1] : target
-            return "[\(label)](jet://note/\(encode(target)))"
-        }
-        return withLinks.replacing(#/(^|\s)#([\p{L}\p{N}_\/-]+)/#) { match -> String in
-            let tag = String(match.2)
-            guard NoteSyntax.isTag(tag) else { return String(match.0) }
-            return "\(match.1)[#\(tag)](jet://tag/\(encode(tag)))"
-        }
-    }
-
-    private static func encode(_ value: String) -> String {
-        value.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? value
-    }
-}
-
-// MARK: - Reading view
-
-struct MarkdownPreview: View {
-    let session: VaultSession
-    let model: MarkdownNoteModel
-    let path: String
-
-    @State private var unlinked: [SearchHit] = []
-
-    var body: some View {
-        let blocks = MarkdownBlock.parse(model.text)
-        let backlinks = (session.index.backlinks[path] ?? []).sorted { $0.localizedStandardCompare($1) == .orderedAscending }
-        ScrollView {
-            VStack(alignment: .leading, spacing: 10) {
-                ForEach(blocks) { block in
-                    view(for: block)
-                }
-                if !backlinks.isEmpty || !unlinked.isEmpty {
-                    Divider().padding(.top, 24)
-                }
-                if !backlinks.isEmpty {
-                    Text("Linked from").font(.caption).foregroundStyle(.secondary)
-                    ForEach(backlinks, id: \.self) { source in
-                        Button {
-                            session.selection = source
-                        } label: {
-                            Label(noteTitle(source), systemImage: "arrow.turn.down.right")
-                        }
-                        .buttonStyle(.plain).foregroundStyle(Color.accentColor)
-                    }
-                }
-                if !unlinked.isEmpty {
-                    Text("Mentioned in (not linked)").font(.caption).foregroundStyle(.secondary)
-                        .padding(.top, backlinks.isEmpty ? 0 : 8)
-                    ForEach(unlinked) { hit in
-                        UnlinkedMentionRow(hit: hit) {
-                            session.selection = hit.path
-                        } link: {
-                            session.linkMention(in: hit.path, to: path)
-                        }
-                    }
-                }
-            }
-            .frame(maxWidth: 760, alignment: .leading)
-            .padding(24)
-            .frame(maxWidth: .infinity)
-            .textSelection(.enabled)
-        }
-        .task(id: session.indexVersion) {
-            unlinked = await session.unlinkedMentions(of: path)
-        }
-        .environment(\.openURL, OpenURLAction { url in
-            guard url.scheme == "jet" else { return .systemAction }
-            let value = String(url.path.dropFirst())
-            switch url.host {
-            case "tag": session.sidebarQuery = "#" + value
-            default: session.openLink(value)
-            }
-            return .handled
-        })
-    }
-
-    /// A Markdown-style path relative to this note's folder (`../Attachments/a%20b.png`).
-    private func relativeToNote(_ target: String) -> String? { session.file(target, relativeTo: path) }
-
-    private func noteTitle(_ path: String) -> String {
-        ((path as NSString).lastPathComponent as NSString).deletingPathExtension
-    }
-
-    @ViewBuilder
-    private func view(for block: MarkdownBlock) -> some View {
-        switch block.kind {
-        case .heading(let level, let text):
-            Text(MarkdownBlock.inline(text))
-                .font(level == 1 ? .largeTitle.bold() : level == 2 ? .title.bold() : level == 3 ? .title2.bold() : .headline)
-                .padding(.top, level <= 2 ? 10 : 4)
-        case .paragraph(let text):
-            Text(MarkdownBlock.inline(text))
-        case .bullet(let indent, let text):
-            listRow(indent: indent, marker: Text("•"), text: text)
-        case .ordered(let indent, let marker, let text):
-            listRow(indent: indent, marker: Text(marker).monospacedDigit(), text: text)
-        case .task(let indent, let done, let text):
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Button {
-                    model.toggleTask(atLine: block.id)
-                } label: {
-                    Image(systemName: done ? "checkmark.square.fill" : "square")
-                        .foregroundStyle(done ? Color.accentColor : .secondary)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(done ? "Mark as not done" : "Mark as done")
-                Text(MarkdownBlock.inline(text))
-                    .strikethrough(done)
-                    .foregroundStyle(done ? .secondary : .primary)
-            }
-            .padding(.leading, CGFloat(indent) * 18)
-        case .quote(let text):
-            Text(MarkdownBlock.inline(text))
-                .foregroundStyle(.secondary)
-                .padding(.leading, 12)
-                .overlay(alignment: .leading) {
-                    Rectangle().fill(.tertiary).frame(width: 3)
-                }
-        case .code(let code):
-            ScrollView(.horizontal) {
-                Text(code)
-                    .font(.system(.callout, design: .monospaced))
-                    .padding(12)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
-        case .embed(let target):
-            embed(target)
-        case .properties(let properties):
-            propertiesView(properties)
-        case .rule:
-            Divider()
-        }
-    }
-
-    private func propertiesView(_ properties: [NoteSyntax.Property]) -> some View {
-        Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 16, verticalSpacing: 6) {
-            ForEach(properties, id: \.self) { property in
-                GridRow {
-                    Text(property.key).foregroundStyle(.secondary)
-                    Text(MarkdownBlock.inline(display(property)))
-                }
-            }
-        }
-        .font(.callout)
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
-        .padding(.bottom, 6)
-    }
-
-    /// Tag properties render as tappable `#tags`, lists as comma-separated values.
-    private func display(_ property: NoteSyntax.Property) -> String {
-        if ["tags", "tag"].contains(property.key.lowercased()) {
-            return NoteSyntax.tags(in: "", properties: [property]).map { "#" + $0 }.joined(separator: " ")
-        }
-        return property.values.isEmpty ? "—" : property.values.joined(separator: ", ")
-    }
-
-    private func listRow(indent: Int, marker: Text, text: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            marker.foregroundStyle(.secondary)
-            Text(MarkdownBlock.inline(text))
-        }
-        .padding(.leading, CGFloat(indent) * 18)
-    }
-
-    @ViewBuilder
-    private func embed(_ target: String) -> some View {
-        let name = target.split(separator: "|").first.map(String.init) ?? target
-        if let url = URL(string: name), ["http", "https"].contains(url.scheme?.lowercased() ?? "") {
-            AsyncImage(url: url) { image in
-                image.resizable().scaledToFit()
-            } placeholder: {
-                ProgressView()
-            }
-            .frame(maxWidth: 600)
-        } else if let path = relativeToNote(name) ?? session.resolve(name) {
-            let ext = (path as NSString).pathExtension.lowercased()
-            if ext == "ink" {
-                Button {
-                    session.selection = path
-                } label: {
-                    InkEmbedView(url: session.url(for: path), root: session.root, version: session.contentVersion)
-                }
-                .buttonStyle(.plain)
-            } else if let image = PlatformImage(contentsOfFile: session.url(for: path).path) {
-                Image(platformImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: 600)
-            } else {
-                Button(name) { session.selection = path }.buttonStyle(.plain).foregroundStyle(Color.accentColor)
-            }
-        } else {
-            Text("Missing: \(name)").foregroundStyle(.secondary).italic()
-        }
-    }
-}
-
 extension VaultSession {
+    /// The shortest `[[link]]` text that opens `node` from the note at `source`: its title, else its path,
+    /// else the path from the vault root (`/Note.md`) when a nearer note would otherwise win.
+    func linkText(for node: FileNode, from source: String) -> String {
+        [node.title, node.path, "/" + node.path].first { resolve($0, from: source) == node.path } ?? "/" + node.path
+    }
+
     /// A link target written relative to the note at `notePath` (`../Pics/a.png`), if that file exists.
     func file(_ target: String, relativeTo notePath: String) -> String? {
         let decoded = target.removingPercentEncoding ?? target
         let folder = (notePath as NSString).deletingLastPathComponent
-        var parts = folder.isEmpty ? [] : folder.split(separator: "/").map(String.init)
+        var parts = decoded.hasPrefix("/") ? [] : folder.split(separator: "/").map(String.init)
         for part in decoded.split(separator: "/").map(String.init) {
             if part == ".." { guard !parts.isEmpty else { return nil }; parts.removeLast() }
             else if part != "." { parts.append(part) }
         }
         let candidate = parts.joined(separator: "/")
-        return !candidate.isEmpty && exists(candidate) && !isDirectory(candidate) ? candidate : nil
+        guard !candidate.isEmpty, (try? root.vaultFile(candidate)) != nil, exists(candidate), !isDirectory(candidate) else { return nil }
+        return candidate
     }
 
     /// The vault file an embed (`![[name]]`, `![alt](path)`) in the note at `notePath` shows, if any.
@@ -588,9 +335,11 @@ private struct UnlinkedMentionRow: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            Button("Link", action: link)
+            if FileKind(path: hit.path) == .markdown {
+                Button("Link", action: link)
                 .controlSize(.small)
                 .help("Turn this mention into a [[link]]")
+            }
         }
     }
 }

@@ -18,7 +18,7 @@ let package = Package(
         .target(
             name: "JetKit",
             dependencies: ["JetCapture", .product(name: "libgit2", package: "libgit2")],
-            exclude: ["MarkdownReader"]
+            resources: [.copy("MarkdownReader")]
         ),
         .testTarget(name: "JetCaptureTests", dependencies: ["JetKit", "JetCapture"]),
     ],

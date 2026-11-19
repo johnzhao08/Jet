@@ -82,6 +82,7 @@ public final class VaultSession {
             }
         }
     }
+    var headingJump: MarkdownHeadingJump?
     var showCommandPalette = false
     var backPaths: [String] = []
     var forwardPaths: [String] = []
@@ -621,13 +622,22 @@ public final class VaultSession {
 
     /// Opens the note a `[[wikilink]]` points at, creating it next to the current note if it does not exist.
     public func openLink(_ target: String) {
-        let name = target.split(separator: "#").first.map(String.init)?.trimmingCharacters(in: .whitespaces) ?? target
-        let bare = Self.noteExtensions.contains((name as NSString).pathExtension.lowercased())
-            ? (name as NSString).deletingPathExtension : name
-        if let path = path(forTitle: (bare as NSString).lastPathComponent) {
-            selection = path
-        } else if !bare.isEmpty {
-            createNote(kind: .markdown, named: (bare as NSString).lastPathComponent)
+        let parts = target.components(separatedBy: "#")
+        let name = parts[0].trimmingCharacters(in: .whitespaces)
+        let heading = parts.dropFirst().joined(separator: "#")
+        let destination: String?
+        if name.isEmpty {
+            destination = selection
+        } else if let path = resolve(name, from: selection) {
+            destination = path
+        } else {
+            let bare = Self.noteExtensions.contains((name as NSString).pathExtension.lowercased())
+                ? (name as NSString).deletingPathExtension : name
+            destination = createNote(kind: .markdown, named: (bare as NSString).lastPathComponent)
+        }
+        if let destination {
+            selection = destination
+            headingJump = heading.isEmpty ? nil : MarkdownHeadingJump(path: destination, heading: heading)
         }
     }
 
