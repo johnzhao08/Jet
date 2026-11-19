@@ -13,6 +13,7 @@ public struct JetApp: App {
         WindowGroup("Jet") {
             RootView()
                 .environment(model)
+                .jetCapture(model)
         }
         #if os(macOS)
         .defaultSize(width: 1180, height: 760)
