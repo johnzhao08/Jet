@@ -2398,3 +2398,403 @@ Expecting `+Pa.join(", ")+", got '"+(this.terminals_[$n]||$n)+"'":qe="Parse erro
 }
 
 g.clickable {
+  cursor: pointer;
+}
+
+g.classGroup rect {
+  fill: ${r.mainBkg};
+  stroke: ${r.nodeBorder};
+}
+
+g.classGroup line {
+  stroke: ${r.nodeBorder};
+  stroke-width: 1;
+}
+
+.classLabel .box {
+  stroke: none;
+  stroke-width: 0;
+  fill: ${r.mainBkg};
+  opacity: 0.5;
+}
+
+.classLabel .label {
+  fill: ${r.nodeBorder};
+  font-size: 10px;
+}
+
+.relation {
+  stroke: ${r.lineColor};
+  stroke-width: ${r.strokeWidth};
+  fill: none;
+}
+
+.dashed-line{
+  stroke-dasharray: 3;
+}
+
+.dotted-line{
+  stroke-dasharray: 1 2;
+}
+
+[id$="-compositionStart"], .composition {
+  fill: ${r.lineColor} !important;
+  stroke: ${r.lineColor} !important;
+  stroke-width: 1;
+}
+
+[id$="-compositionEnd"], .composition {
+  fill: ${r.lineColor} !important;
+  stroke: ${r.lineColor} !important;
+  stroke-width: 1;
+}
+
+[id$="-dependencyStart"], .dependency {
+  fill: ${r.lineColor} !important;
+  stroke: ${r.lineColor} !important;
+  stroke-width: 1;
+}
+
+[id$="-dependencyEnd"], .dependency {
+  fill: ${r.lineColor} !important;
+  stroke: ${r.lineColor} !important;
+  stroke-width: 1;
+}
+
+[id$="-extensionStart"], .extension {
+  fill: transparent !important;
+  stroke: ${r.lineColor} !important;
+  stroke-width: 1;
+}
+
+[id$="-extensionEnd"], .extension {
+  fill: transparent !important;
+  stroke: ${r.lineColor} !important;
+  stroke-width: 1;
+}
+
+[id$="-aggregationStart"], .aggregation {
+  fill: transparent !important;
+  stroke: ${r.lineColor} !important;
+  stroke-width: 1;
+}
+
+[id$="-aggregationEnd"], .aggregation {
+  fill: transparent !important;
+  stroke: ${r.lineColor} !important;
+  stroke-width: 1;
+}
+
+[id$="-lollipopStart"], .lollipop {
+  fill: ${r.mainBkg} !important;
+  stroke: ${r.lineColor} !important;
+  stroke-width: 1;
+}
+
+[id$="-lollipopEnd"], .lollipop {
+  fill: ${r.mainBkg} !important;
+  stroke: ${r.lineColor} !important;
+  stroke-width: 1;
+}
+
+.edgeTerminals {
+  font-size: 11px;
+  line-height: initial;
+}
+
+.classTitleText {
+  text-anchor: middle;
+  font-size: 18px;
+  fill: ${r.textColor};
+}
+
+.edgeLabel[data-look="neo"] {
+  background-color: ${r.edgeLabelBackground};
+  p {
+    background-color: ${r.edgeLabelBackground};
+  }
+  rect {
+    opacity: 0.5;
+    background-color: ${r.edgeLabelBackground};
+    fill: ${r.edgeLabelBackground};
+  }
+  text-align: center;
+}
+  ${ak()}
+`,"getStyles"),OGr=sdi});var odi,ldi,cdi,BGr,FGr=ae(()=>{"use strict";ma();Yn();FA();PS();BS();Ma();odi=i((r,t="TB")=>{if(!r.doc)return t;let a=t;for(let s of r.doc)s.stmt==="dir"&&(a=s.value);return a},"getDir"),ldi=i(function(r,t){return t.db.getClasses()},"getClasses"),cdi=i(async function(r,t,a,s){Pe.info("REF0:"),Pe.info("Drawing class diagram (v3)",t);let{securityLevel:l,state:h,layout:f}=er();s.db.setDiagramId(t);let d=s.db.getData(),m=dy(t,l);d.type=s.type,d.layoutAlgorithm=Ty(f),d.nodeSpacing=h?.nodeSpacing||50,d.rankSpacing=h?.rankSpacing||50,d.markers=["aggregation","extension","composition","dependency","lollipop"],d.diagramId=t,await xy(d,m);let b=8;Va.insertTitle(m,"classDiagramTitleText",h?.titleTopMargin??25,s.db.getDiagramTitle()),Sm(m,b,"classDiagram",h?.useMaxWidth??!0)},"draw"),BGr={getClasses:ldi,draw:cdi,getDir:odi}});var $Gr={};is($Gr,{diagram:()=>udi});var udi,GGr=ae(()=>{"use strict";_Gr();NGr();PGr();FGr();udi={parser:LGr,get db(){return new PCe},renderer:BGr,styles:OGr,init:i(r=>{r.class||(r.class={}),r.class.arrowMarkerAbsolute=r.arrowMarkerAbsolute},"init")}});var Iut,UGr,VGr=ae(()=>{"use strict";Iut=(function(){var r=i(function(ne,se,he,le){for(he=he||{},le=ne.length;le--;he[ne[le]]=se);return he},"o"),t=[1,2],a=[1,3],s=[1,4],l=[2,4],h=[1,9],f=[1,11],d=[1,16],m=[1,17],b=[1,18],v=[1,19],T=[1,33],C=[1,20],E=[1,21],S=[1,22],R=[1,23],L=[1,24],_=[1,26],I=[1,27],N=[1,28],B=[1,29],O=[1,30],P=[1,31],$=[1,32],V=[1,35],Y=[1,36],Q=[1,37],q=[1,38],W=[1,34],H=[1,4,5,16,17,19,21,22,24,25,26,27,28,29,33,35,37,38,41,45,48,51,52,53,54,57],re=[1,4,5,14,15,16,17,19,21,22,24,25,26,27,28,29,33,35,37,38,39,40,41,45,48,51,52,53,54,57],Z=[4,5,16,17,19,21,22,24,25,26,27,28,29,33,35,37,38,41,45,48,51,52,53,54,57],X={trace:i(function(){},"trace"),yy:{},symbols_:{error:2,start:3,SPACE:4,NL:5,SD:6,document:7,line:8,statement:9,classDefStatement:10,styleStatement:11,cssClassStatement:12,idStatement:13,DESCR:14,"-->":15,HIDE_EMPTY:16,scale:17,WIDTH:18,COMPOSIT_STATE:19,STRUCT_START:20,STRUCT_STOP:21,STATE_DESCR:22,AS:23,ID:24,FORK:25,JOIN:26,CHOICE:27,CONCURRENT:28,note:29,notePosition:30,NOTE_TEXT:31,direction:32,acc_title:33,acc_title_value:34,acc_descr:35,acc_descr_value:36,acc_descr_multiline_value:37,CLICK:38,STRING:39,HREF:40,classDef:41,CLASSDEF_ID:42,CLASSDEF_STYLEOPTS:43,DEFAULT:44,style:45,STYLE_IDS:46,STYLEDEF_STYLEOPTS:47,class:48,CLASSENTITY_IDS:49,STYLECLASS:50,direction_tb:51,direction_bt:52,direction_rl:53,direction_lr:54,eol:55,";":56,EDGE_STATE:57,STYLE_SEPARATOR:58,left_of:59,right_of:60,$accept:0,$end:1},terminals_:{2:"error",4:"SPACE",5:"NL",6:"SD",14:"DESCR",15:"-->",16:"HIDE_EMPTY",17:"scale",18:"WIDTH",19:"COMPOSIT_STATE",20:"STRUCT_START",21:"STRUCT_STOP",22:"STATE_DESCR",23:"AS",24:"ID",25:"FORK",26:"JOIN",27:"CHOICE",28:"CONCURRENT",29:"note",31:"NOTE_TEXT",33:"acc_title",34:"acc_title_value",35:"acc_descr",36:"acc_descr_value",37:"acc_descr_multiline_value",38:"CLICK",39:"STRING",40:"HREF",41:"classDef",42:"CLASSDEF_ID",43:"CLASSDEF_STYLEOPTS",44:"DEFAULT",45:"style",46:"STYLE_IDS",47:"STYLEDEF_STYLEOPTS",48:"class",49:"CLASSENTITY_IDS",50:"STYLECLASS",51:"direction_tb",52:"direction_bt",53:"direction_rl",54:"direction_lr",56:";",57:"EDGE_STATE",58:"STYLE_SEPARATOR",59:"left_of",60:"right_of"},productions_:[0,[3,2],[3,2],[3,2],[7,0],[7,2],[8,2],[8,1],[8,1],[9,1],[9,1],[9,1],[9,1],[9,2],[9,3],[9,4],[9,1],[9,2],[9,1],[9,4],[9,3],[9,6],[9,1],[9,1],[9,1],[9,1],[9,4],[9,4],[9,1],[9,2],[9,2],[9,1],[9,5],[9,5],[10,3],[10,3],[11,3],[12,3],[32,1],[32,1],[32,1],[32,1],[55,1],[55,1],[13,1],[13,1],[13,3],[13,3],[30,1],[30,1]],performAction:i(function(se,he,le,pe,ge,we,Ae){var ve=we.length-1;switch(ge){case 3:return pe.setRootDoc(we[ve]),we[ve];break;case 4:this.$=[];break;case 5:we[ve]!="nl"&&(we[ve-1].push(we[ve]),this.$=we[ve-1]);break;case 6:case 7:this.$=we[ve];break;case 8:this.$="nl";break;case 12:this.$=we[ve];break;case 13:let Fe=we[ve-1];Fe.description=pe.trimColon(we[ve]),this.$=Fe;break;case 14:this.$={stmt:"relation",state1:we[ve-2],state2:we[ve]};break;case 15:let ze=pe.trimColon(we[ve]);this.$={stmt:"relation",state1:we[ve-3],state2:we[ve-1],description:ze};break;case 19:this.$={stmt:"state",id:we[ve-3],type:"default",description:"",doc:we[ve-1]};break;case 20:var Ie=we[ve],De=we[ve-2].trim();if(we[ve].match(":")){var Be=we[ve].split(":");Ie=Be[0],De=[De,Be[1]]}this.$={stmt:"state",id:Ie,type:"default",description:De};break;case 21:this.$={stmt:"state",id:we[ve-3],type:"default",description:we[ve-5],doc:we[ve-1]};break;case 22:this.$={stmt:"state",id:we[ve],type:"fork"};break;case 23:this.$={stmt:"state",id:we[ve],type:"join"};break;case 24:this.$={stmt:"state",id:we[ve],type:"choice"};break;case 25:this.$={stmt:"state",id:pe.getDividerId(),type:"divider"};break;case 26:this.$={stmt:"state",id:we[ve-1].trim(),note:{position:we[ve-2].trim(),text:we[ve].trim()}};break;case 29:this.$=we[ve].trim(),pe.setAccTitle(this.$);break;case 30:case 31:this.$=we[ve].trim(),pe.setAccDescription(this.$);break;case 32:this.$={stmt:"click",id:we[ve-3],url:we[ve-2],tooltip:we[ve-1]};break;case 33:this.$={stmt:"click",id:we[ve-3],url:we[ve-1],tooltip:""};break;case 34:case 35:this.$={stmt:"classDef",id:we[ve-1].trim(),classes:we[ve].trim()};break;case 36:this.$={stmt:"style",id:we[ve-1].trim(),styleClass:we[ve].trim()};break;case 37:this.$={stmt:"applyClass",id:we[ve-1].trim(),styleClass:we[ve].trim()};break;case 38:pe.setDirection("TB"),this.$={stmt:"dir",value:"TB"};break;case 39:pe.setDirection("BT"),this.$={stmt:"dir",value:"BT"};break;case 40:pe.setDirection("RL"),this.$={stmt:"dir",value:"RL"};break;case 41:pe.setDirection("LR"),this.$={stmt:"dir",value:"LR"};break;case 44:case 45:this.$={stmt:"state",id:we[ve].trim(),type:"default",description:""};break;case 46:this.$={stmt:"state",id:we[ve-2].trim(),classes:[we[ve].trim()],type:"default",description:""};break;case 47:this.$={stmt:"state",id:we[ve-2].trim(),classes:[we[ve].trim()],type:"default",description:""};break}},"anonymous"),table:[{3:1,4:t,5:a,6:s},{1:[3]},{3:5,4:t,5:a,6:s},{3:6,4:t,5:a,6:s},r([1,4,5,16,17,19,22,24,25,26,27,28,29,33,35,37,38,41,45,48,51,52,53,54,57],l,{7:7}),{1:[2,1]},{1:[2,2]},{1:[2,3],4:h,5:f,8:8,9:10,10:12,11:13,12:14,13:15,16:d,17:m,19:b,22:v,24:T,25:C,26:E,27:S,28:R,29:L,32:25,33:_,35:I,37:N,38:B,41:O,45:P,48:$,51:V,52:Y,53:Q,54:q,57:W},r(H,[2,5]),{9:39,10:12,11:13,12:14,13:15,16:d,17:m,19:b,22:v,24:T,25:C,26:E,27:S,28:R,29:L,32:25,33:_,35:I,37:N,38:B,41:O,45:P,48:$,51:V,52:Y,53:Q,54:q,57:W},r(H,[2,7]),r(H,[2,8]),r(H,[2,9]),r(H,[2,10]),r(H,[2,11]),r(H,[2,12],{14:[1,40],15:[1,41]}),r(H,[2,16]),{18:[1,42]},r(H,[2,18],{20:[1,43]}),{23:[1,44]},r(H,[2,22]),r(H,[2,23]),r(H,[2,24]),r(H,[2,25]),{30:45,31:[1,46],59:[1,47],60:[1,48]},r(H,[2,28]),{34:[1,49]},{36:[1,50]},r(H,[2,31]),{13:51,24:T,57:W},{42:[1,52],44:[1,53]},{46:[1,54]},{49:[1,55]},r(re,[2,44],{58:[1,56]}),r(re,[2,45],{58:[1,57]}),r(H,[2,38]),r(H,[2,39]),r(H,[2,40]),r(H,[2,41]),r(H,[2,6]),r(H,[2,13]),{13:58,24:T,57:W},r(H,[2,17]),r(Z,l,{7:59}),{24:[1,60]},{24:[1,61]},{23:[1,62]},{24:[2,48]},{24:[2,49]},r(H,[2,29]),r(H,[2,30]),{39:[1,63],40:[1,64]},{43:[1,65]},{43:[1,66]},{47:[1,67]},{50:[1,68]},{24:[1,69]},{24:[1,70]},r(H,[2,14],{14:[1,71]}),{4:h,5:f,8:8,9:10,10:12,11:13,12:14,13:15,16:d,17:m,19:b,21:[1,72],22:v,24:T,25:C,26:E,27:S,28:R,29:L,32:25,33:_,35:I,37:N,38:B,41:O,45:P,48:$,51:V,52:Y,53:Q,54:q,57:W},r(H,[2,20],{20:[1,73]}),{31:[1,74]},{24:[1,75]},{39:[1,76]},{39:[1,77]},r(H,[2,34]),r(H,[2,35]),r(H,[2,36]),r(H,[2,37]),r(re,[2,46]),r(re,[2,47]),r(H,[2,15]),r(H,[2,19]),r(Z,l,{7:78}),r(H,[2,26]),r(H,[2,27]),{5:[1,79]},{5:[1,80]},{4:h,5:f,8:8,9:10,10:12,11:13,12:14,13:15,16:d,17:m,19:b,21:[1,81],22:v,24:T,25:C,26:E,27:S,28:R,29:L,32:25,33:_,35:I,37:N,38:B,41:O,45:P,48:$,51:V,52:Y,53:Q,54:q,57:W},r(H,[2,32]),r(H,[2,33]),r(H,[2,21])],defaultActions:{5:[2,1],6:[2,2],47:[2,48],48:[2,49]},parseError:i(function(se,he){if(he.recoverable)this.trace(se);else{var le=new Error(se);throw le.hash=he,le}},"parseError"),parse:i(function(se){var he=this,le=[0],pe=[],ge=[null],we=[],Ae=this.table,ve="",Ie=0,De=0,Be=0,Fe=2,ze=1,vt=we.slice.call(arguments,1),lt=Object.create(this.lexer),Ft={yy:{}};for(var pr in this.yy)Object.prototype.hasOwnProperty.call(this.yy,pr)&&(Ft.yy[pr]=this.yy[pr]);lt.setInput(se,Ft.yy),Ft.yy.lexer=lt,Ft.yy.parser=this,typeof lt.yylloc>"u"&&(lt.yylloc={});var tr=lt.yylloc;we.push(tr);var Mt=lt.options&&lt.options.ranges;typeof Ft.yy.parseError=="function"?this.parseError=Ft.yy.parseError:this.parseError=Object.getPrototypeOf(this).parseError;function ot(me){le.length=le.length-2*me,ge.length=ge.length-me,we.length=we.length-me}i(ot,"popStack");function it(){var me;return me=pe.pop()||lt.lex()||ze,typeof me!="number"&&(me instanceof Array&&(pe=me,me=pe.pop()),me=he.symbols_[me]||me),me}i(it,"lex");for(var mt,Rt,pt,gt,ut,Yt,Ye={},Oe,K,Te,ce;;){if(pt=le[le.length-1],this.defaultActions[pt]?gt=this.defaultActions[pt]:((mt===null||typeof mt>"u")&&(mt=it()),gt=Ae[pt]&&Ae[pt][mt]),typeof gt>"u"||!gt.length||!gt[0]){var Re="";ce=[];for(Oe in Ae[pt])this.terminals_[Oe]&&Oe>Fe&&ce.push("'"+this.terminals_[Oe]+"'");lt.showPosition?Re="Parse error on line "+(Ie+1)+`:
+`+lt.showPosition()+`
+Expecting `+ce.join(", ")+", got '"+(this.terminals_[mt]||mt)+"'":Re="Parse error on line "+(Ie+1)+": Unexpected "+(mt==ze?"end of input":"'"+(this.terminals_[mt]||mt)+"'"),this.parseError(Re,{text:lt.match,token:this.terminals_[mt]||mt,line:lt.yylineno,loc:tr,expected:ce})}if(gt[0]instanceof Array&&gt.length>1)throw new Error("Parse Error: multiple actions possible at state: "+pt+", token: "+mt);switch(gt[0]){case 1:le.push(mt),ge.push(lt.yytext),we.push(lt.yylloc),le.push(gt[1]),mt=null,Rt?(mt=Rt,Rt=null):(De=lt.yyleng,ve=lt.yytext,Ie=lt.yylineno,tr=lt.yylloc,Be>0&&Be--);break;case 2:if(K=this.productions_[gt[1]][1],Ye.$=ge[ge.length-K],Ye._$={first_line:we[we.length-(K||1)].first_line,last_line:we[we.length-1].last_line,first_column:we[we.length-(K||1)].first_column,last_column:we[we.length-1].last_column},Mt&&(Ye._$.range=[we[we.length-(K||1)].range[0],we[we.length-1].range[1]]),Yt=this.performAction.apply(Ye,[ve,De,Ie,Ft.yy,gt[1],ge,we].concat(vt)),typeof Yt<"u")return Yt;K&&(le=le.slice(0,-1*K*2),ge=ge.slice(0,-1*K),we=we.slice(0,-1*K)),le.push(this.productions_[gt[1]][0]),ge.push(Ye.$),we.push(Ye._$),Te=Ae[le[le.length-2]][le[le.length-1]],le.push(Te);break;case 3:return!0}}return!0},"parse")},te=(function(){var ne={EOF:1,parseError:i(function(he,le){if(this.yy.parser)this.yy.parser.parseError(he,le);else throw new Error(he)},"parseError"),setInput:i(function(se,he){return this.yy=he||this.yy||{},this._input=se,this._more=this._backtrack=this.done=!1,this.yylineno=this.yyleng=0,this.yytext=this.matched=this.match="",this.conditionStack=["INITIAL"],this.yylloc={first_line:1,first_column:0,last_line:1,last_column:0},this.options.ranges&&(this.yylloc.range=[0,0]),this.offset=0,this},"setInput"),input:i(function(){var se=this._input[0];this.yytext+=se,this.yyleng++,this.offset++,this.match+=se,this.matched+=se;var he=se.match(/(?:\r\n?|\n).*/g);return he?(this.yylineno++,this.yylloc.last_line++):this.yylloc.last_column++,this.options.ranges&&this.yylloc.range[1]++,this._input=this._input.slice(1),se},"input"),unput:i(function(se){var he=se.length,le=se.split(/(?:\r\n?|\n)/g);this._input=se+this._input,this.yytext=this.yytext.substr(0,this.yytext.length-he),this.offset-=he;var pe=this.match.split(/(?:\r\n?|\n)/g);this.match=this.match.substr(0,this.match.length-1),this.matched=this.matched.substr(0,this.matched.length-1),le.length-1&&(this.yylineno-=le.length-1);var ge=this.yylloc.range;return this.yylloc={first_line:this.yylloc.first_line,last_line:this.yylineno+1,first_column:this.yylloc.first_column,last_column:le?(le.length===pe.length?this.yylloc.first_column:0)+pe[pe.length-le.length].length-le[0].length:this.yylloc.first_column-he},this.options.ranges&&(this.yylloc.range=[ge[0],ge[0]+this.yyleng-he]),this.yyleng=this.yytext.length,this},"unput"),more:i(function(){return this._more=!0,this},"more"),reject:i(function(){if(this.options.backtrack_lexer)this._backtrack=!0;else return this.parseError("Lexical error on line "+(this.yylineno+1)+`. You can only invoke reject() in the lexer when the lexer is of the backtracking persuasion (options.backtrack_lexer = true).
+`+this.showPosition(),{text:"",token:null,line:this.yylineno});return this},"reject"),less:i(function(se){this.unput(this.match.slice(se))},"less"),pastInput:i(function(){var se=this.matched.substr(0,this.matched.length-this.match.length);return(se.length>20?"...":"")+se.substr(-20).replace(/\n/g,"")},"pastInput"),upcomingInput:i(function(){var se=this.match;return se.length<20&&(se+=this._input.substr(0,20-se.length)),(se.substr(0,20)+(se.length>20?"...":"")).replace(/\n/g,"")},"upcomingInput"),showPosition:i(function(){var se=this.pastInput(),he=new Array(se.length+1).join("-");return se+this.upcomingInput()+`
+`+he+"^"},"showPosition"),test_match:i(function(se,he){var le,pe,ge;if(this.options.backtrack_lexer&&(ge={yylineno:this.yylineno,yylloc:{first_line:this.yylloc.first_line,last_line:this.last_line,first_column:this.yylloc.first_column,last_column:this.yylloc.last_column},yytext:this.yytext,match:this.match,matches:this.matches,matched:this.matched,yyleng:this.yyleng,offset:this.offset,_more:this._more,_input:this._input,yy:this.yy,conditionStack:this.conditionStack.slice(0),done:this.done},this.options.ranges&&(ge.yylloc.range=this.yylloc.range.slice(0))),pe=se[0].match(/(?:\r\n?|\n).*/g),pe&&(this.yylineno+=pe.length),this.yylloc={first_line:this.yylloc.last_line,last_line:this.yylineno+1,first_column:this.yylloc.last_column,last_column:pe?pe[pe.length-1].length-pe[pe.length-1].match(/\r?\n?/)[0].length:this.yylloc.last_column+se[0].length},this.yytext+=se[0],this.match+=se[0],this.matches=se,this.yyleng=this.yytext.length,this.options.ranges&&(this.yylloc.range=[this.offset,this.offset+=this.yyleng]),this._more=!1,this._backtrack=!1,this._input=this._input.slice(se[0].length),this.matched+=se[0],le=this.performAction.call(this,this.yy,this,he,this.conditionStack[this.conditionStack.length-1]),this.done&&this._input&&(this.done=!1),le)return le;if(this._backtrack){for(var we in ge)this[we]=ge[we];return!1}return!1},"test_match"),next:i(function(){if(this.done)return this.EOF;this._input||(this.done=!0);var se,he,le,pe;this._more||(this.yytext="",this.match="");for(var ge=this._currentRules(),we=0;we<ge.length;we++)if(le=this._input.match(this.rules[ge[we]]),le&&(!he||le[0].length>he[0].length)){if(he=le,pe=we,this.options.backtrack_lexer){if(se=this.test_match(le,ge[we]),se!==!1)return se;if(this._backtrack){he=!1;continue}else return!1}else if(!this.options.flex)break}return he?(se=this.test_match(he,ge[pe]),se!==!1?se:!1):this._input===""?this.EOF:this.parseError("Lexical error on line "+(this.yylineno+1)+`. Unrecognized text.
+`+this.showPosition(),{text:"",token:null,line:this.yylineno})},"next"),lex:i(function(){var he=this.next();return he||this.lex()},"lex"),begin:i(function(he){this.conditionStack.push(he)},"begin"),popState:i(function(){var he=this.conditionStack.length-1;return he>0?this.conditionStack.pop():this.conditionStack[0]},"popState"),_currentRules:i(function(){return this.conditionStack.length&&this.conditionStack[this.conditionStack.length-1]?this.conditions[this.conditionStack[this.conditionStack.length-1]].rules:this.conditions.INITIAL.rules},"_currentRules"),topState:i(function(he){return he=this.conditionStack.length-1-Math.abs(he||0),he>=0?this.conditionStack[he]:"INITIAL"},"topState"),pushState:i(function(he){this.begin(he)},"pushState"),stateStackSize:i(function(){return this.conditionStack.length},"stateStackSize"),options:{"case-insensitive":!0},performAction:i(function(he,le,pe,ge){function we(){let ve=le.yytext.indexOf("%%");if(ve===0)return!1;if(ve>0){let Ie=le.yytext.slice(0,ve),De=le.yytext.slice(ve);De&&he.lexer.unput(De),le.yytext=Ie}return!0}i(we,"processId");var Ae=ge;switch(pe){case 0:return 38;case 1:return 40;case 2:return 39;case 3:return 44;case 4:return 51;case 5:return 52;case 6:return 53;case 7:return 54;case 8:return 5;case 9:break;case 10:break;case 11:break;case 12:break;case 13:return this.pushState("SCALE"),17;break;case 14:return 18;case 15:this.popState();break;case 16:return this.begin("acc_title"),33;break;case 17:return this.popState(),"acc_title_value";break;case 18:return this.begin("acc_descr"),35;break;case 19:return this.popState(),"acc_descr_value";break;case 20:this.begin("acc_descr_multiline");break;case 21:this.popState();break;case 22:return"acc_descr_multiline_value";case 23:return this.pushState("CLASSDEF"),41;break;case 24:return this.popState(),this.pushState("CLASSDEFID"),"DEFAULT_CLASSDEF_ID";break;case 25:return this.popState(),this.pushState("CLASSDEFID"),42;break;case 26:return this.popState(),43;break;case 27:return this.pushState("CLASS"),48;break;case 28:return this.popState(),this.pushState("CLASS_STYLE"),49;break;case 29:return this.popState(),50;break;case 30:return this.pushState("STYLE"),45;break;case 31:return this.popState(),this.pushState("STYLEDEF_STYLES"),46;break;case 32:return this.popState(),47;break;case 33:return this.pushState("SCALE"),17;break;case 34:return 18;case 35:this.popState();break;case 36:this.pushState("STATE");break;case 37:return this.popState(),le.yytext=le.yytext.slice(0,-8).trim(),25;break;case 38:return this.popState(),le.yytext=le.yytext.slice(0,-8).trim(),26;break;case 39:return this.popState(),le.yytext=le.yytext.slice(0,-10).trim(),27;break;case 40:return this.popState(),le.yytext=le.yytext.slice(0,-8).trim(),25;break;case 41:return this.popState(),le.yytext=le.yytext.slice(0,-8).trim(),26;break;case 42:return this.popState(),le.yytext=le.yytext.slice(0,-10).trim(),27;break;case 43:return 51;case 44:return 52;case 45:return 53;case 46:return 54;case 47:this.pushState("STATE_STRING");break;case 48:return this.pushState("STATE_ID"),"AS";break;case 49:if(!we())return;return this.popState(),"ID";break;case 50:this.popState();break;case 51:return"STATE_DESCR";case 52:throw new Error('Error: State name must be a single word. Found: "'+le.yytext.trim()+'"');case 53:return 19;case 54:this.popState();break;case 55:return this.popState(),this.pushState("struct"),20;break;case 56:return this.popState(),21;break;case 57:break;case 58:return this.begin("NOTE"),29;break;case 59:return this.popState(),this.pushState("NOTE_ID"),59;break;case 60:return this.popState(),this.pushState("NOTE_ID"),60;break;case 61:this.popState(),this.pushState("FLOATING_NOTE");break;case 62:return this.popState(),this.pushState("FLOATING_NOTE_ID"),"AS";break;case 63:break;case 64:return"NOTE_TEXT";case 65:if(!we())return;return this.popState(),"ID";break;case 66:if(!we())return;return this.popState(),this.pushState("NOTE_TEXT"),24;break;case 67:return this.popState(),le.yytext=le.yytext.substr(2).trim(),31;break;case 68:return this.popState(),le.yytext=le.yytext.slice(0,-8).trim(),31;break;case 69:return 6;case 70:return 6;case 71:return 16;case 72:return 57;case 73:return we()?24:void 0;case 74:return le.yytext=le.yytext.trim(),14;break;case 75:return 15;case 76:return 28;case 77:return 58;case 78:return 5;case 79:return"INVALID"}},"anonymous"),rules:[/^(?:click\b)/i,/^(?:href\b)/i,/^(?:"[^"]*")/i,/^(?:default\b)/i,/^(?:.*direction\s+TB[^\n]*)/i,/^(?:.*direction\s+BT[^\n]*)/i,/^(?:.*direction\s+RL[^\n]*)/i,/^(?:.*direction\s+LR[^\n]*)/i,/^(?:[\n]+)/i,/^(?:[\s]+)/i,/^(?:((?!\n)\s)+)/i,/^(?:#[^\n]*)/i,/^(?:%%(?!\{)[^\n]*)/i,/^(?:scale\s+)/i,/^(?:\d+)/i,/^(?:\s+width\b)/i,/^(?:accTitle\s*:\s*)/i,/^(?:(?!\n||)*[^\n]*)/i,/^(?:accDescr\s*:\s*)/i,/^(?:(?!\n||)*[^\n]*)/i,/^(?:accDescr\s*\{\s*)/i,/^(?:[\}])/i,/^(?:[^\}]*)/i,/^(?:classDef\s+)/i,/^(?:DEFAULT\s+)/i,/^(?:\w+\s+)/i,/^(?:[^\n]*)/i,/^(?:class\s+)/i,/^(?:(\w+)+((,\s*\w+)*))/i,/^(?:[^\n]*)/i,/^(?:style\s+)/i,/^(?:[\w,]+\s+)/i,/^(?:[^\n]*)/i,/^(?:scale\s+)/i,/^(?:\d+)/i,/^(?:\s+width\b)/i,/^(?:state\s+)/i,/^(?:.*<<fork>>)/i,/^(?:.*<<join>>)/i,/^(?:.*<<choice>>)/i,/^(?:.*\[\[fork\]\])/i,/^(?:.*\[\[join\]\])/i,/^(?:.*\[\[choice\]\])/i,/^(?:.*direction\s+TB[^\n]*)/i,/^(?:.*direction\s+BT[^\n]*)/i,/^(?:.*direction\s+RL[^\n]*)/i,/^(?:.*direction\s+LR[^\n]*)/i,/^(?:["])/i,/^(?:\s*as\s+)/i,/^(?:[^\n\{]*)/i,/^(?:["])/i,/^(?:[^"]*)/i,/^(?:\w+\s+\w+.*?\{)/i,/^(?:[^\n\s\{]+)/i,/^(?:\n)/i,/^(?:\{)/i,/^(?:\})/i,/^(?:[\n])/i,/^(?:note\s+)/i,/^(?:left of\b)/i,/^(?:right of\b)/i,/^(?:")/i,/^(?:\s*as\s*)/i,/^(?:["])/i,/^(?:[^"]*)/i,/^(?:[^\n]*)/i,/^(?:\s*[^:\n\s\-]+)/i,/^(?:\s*:[^:\n;]+)/i,/^(?:[\s\S]*?\n\s*end note\b)/i,/^(?:stateDiagram\s+)/i,/^(?:stateDiagram-v2\s+)/i,/^(?:hide empty description\b)/i,/^(?:\[\*\])/i,/^(?:[^:\n\s\-\{]+)/i,/^(?:\s*:(?:[^:\n;]|:[^:\n;])+)/i,/^(?:-->)/i,/^(?:--)/i,/^(?::::)/i,/^(?:$)/i,/^(?:.)/i],conditions:{LINE:{rules:[10,11,12],inclusive:!1},struct:{rules:[10,11,12,23,27,30,36,43,44,45,46,56,57,58,72,73,74,75,76,77],inclusive:!1},FLOATING_NOTE_ID:{rules:[65],inclusive:!1},FLOATING_NOTE:{rules:[62,63,64],inclusive:!1},NOTE_TEXT:{rules:[67,68],inclusive:!1},NOTE_ID:{rules:[66],inclusive:!1},NOTE:{rules:[59,60,61],inclusive:!1},STYLEDEF_STYLEOPTS:{rules:[],inclusive:!1},STYLEDEF_STYLES:{rules:[32],inclusive:!1},STYLE_IDS:{rules:[],inclusive:!1},STYLE:{rules:[31],inclusive:!1},CLASS_STYLE:{rules:[29],inclusive:!1},CLASS:{rules:[28],inclusive:!1},CLASSDEFID:{rules:[26],inclusive:!1},CLASSDEF:{rules:[24,25],inclusive:!1},acc_descr_multiline:{rules:[21,22],inclusive:!1},acc_descr:{rules:[19],inclusive:!1},acc_title:{rules:[17],inclusive:!1},SCALE:{rules:[14,15,34,35],inclusive:!1},ALIAS:{rules:[],inclusive:!1},STATE_ID:{rules:[49],inclusive:!1},STATE_STRING:{rules:[50,51],inclusive:!1},FORK_STATE:{rules:[],inclusive:!1},STATE:{rules:[10,11,12,37,38,39,40,41,42,47,48,52,53,54,55],inclusive:!1},ID:{rules:[10,11,12],inclusive:!1},INITIAL:{rules:[0,1,2,3,4,5,6,7,8,9,11,12,13,16,18,20,23,27,30,33,36,55,58,69,70,71,72,73,74,75,77,78,79],inclusive:!0}}};return ne})();X.lexer=te;function U(){this.yy={}}return i(U,"Parser"),U.prototype=X,X.Parser=U,new U})();Iut.parser=Iut;UGr=Iut});var ND,xB,qae,WGr,HGr,qGr,TB,BCe,Mut,Nut,Out,Put,FCe,$Ce,YGr,XGr,GCe,But,KGr,JGr,AW,pdi,QGr,Fut,gdi,mdi,ZGr,ejr,ydi,tjr,bdi,rjr,$ut,Gut,njr,jCe,ijr,jut,zCe=ae(()=>{"use strict";ND="state",xB="root",qae="relation",WGr="classDef",HGr="style",qGr="applyClass",TB="default",BCe="divider",Mut="fill:none",Nut="fill: #333",Out="markdown",Put="normal",FCe="rect",$Ce="rectWithTitle",YGr="stateStart",XGr="stateEnd",GCe="divider",But="roundedWithTitle",KGr="note",JGr="noteGroup",AW="statediagram",pdi="state",QGr=`${AW}-${pdi}`,Fut="transition",gdi="note",mdi="note-edge",ZGr=`${Fut} ${mdi}`,ejr=`${AW}-${gdi}`,ydi="cluster",tjr=`${AW}-${ydi}`,bdi="cluster-alt",rjr=`${AW}-${bdi}`,$ut="parent",Gut="note",njr="state",jCe="----",ijr=`${jCe}${Gut}`,jut=`${jCe}${$ut}`});function zut(r="",t=0,a="",s=jCe){let l=a!==null&&a.length>0?`${s}${a}`:"";return`${njr}-${r}${l}-${t}`}function UCe(r,t,a){if(!t.id||t.id==="</join></fork>"||t.id==="</choice>")return;t.cssClasses&&(Array.isArray(t.cssCompiledStyles)||(t.cssCompiledStyles=[]),t.cssClasses.split(" ").forEach(l=>{let h=a.get(l);h&&(t.cssCompiledStyles=[...t.cssCompiledStyles??[],...h.styles])}));let s=r.find(l=>l.id===t.id);s?Object.assign(s,t):r.push(t)}function xdi(r){return r?.classes?.join(" ")??""}function Tdi(r){return r?.styles??[]}var VCe,OD,ojr,Yae,vdi,wdi,ajr,RW,ljr,cjr=ae(()=>{"use strict";ma();Yn();nl();zCe();VCe=new Map,OD=0,ojr=0,Yae=new Map,vdi=i((r,t,a,s)=>{if(r===GCe&&a?.id!==void 0&&Yae.has(a.id)){let f=Yae.get(a.id);return Yae.set(t,f),f}let l=ojr++,h=s?void 0:l;return Yae.set(t,h),h},"colorSlotFor");i(zut,"stateDomId");wdi=i((r,t,a,s,l,h,f,d)=>{Pe.trace("items",t),t.forEach(m=>{switch(m.stmt){case ND:RW(r,m,a,s,l,h,f,d);break;case TB:RW(r,m,a,s,l,h,f,d);break;case qae:{RW(r,m.state1,a,s,l,h,f,d),RW(r,m.state2,a,s,l,h,f,d);let b=f==="neo",v={id:"edge"+OD,start:m.state1.id,end:m.state2.id,arrowhead:"normal",arrowTypeEnd:b?"arrow_barb_neo":"arrow_barb",style:Mut,labelStyle:"",label:Xn.sanitizeText(m.description??"",er()),arrowheadStyle:Nut,labelpos:"c",labelType:Out,thickness:Put,classes:Fut,look:f};l.push(v),OD++}break}})},"setupDoc"),ajr=i((r,t="TB")=>{let a=t;if(r.doc)for(let s of r.doc)s.stmt==="dir"&&(a=s.value);return a},"getDir");i(UCe,"insertOrUpdateNode");i(xdi,"getClassesFromDbInfo");i(Tdi,"getStylesFromDbInfo");RW=i((r,t,a,s,l,h,f,d)=>{let m=t.id,b=a.get(m),v=xdi(b),T=Tdi(b),C=er(),E=v.trim()!==""||T.length>0;if(Pe.info("dataFetcher parsedItem",t,b,T),m!=="root"){let S=FCe;t.start===!0?S=YGr:t.start===!1&&(S=XGr),t.type!==TB&&(S=t.type),VCe.get(m)||VCe.set(m,{id:m,shape:S,description:Xn.sanitizeText(m,C),cssClasses:`${v} ${QGr}`,cssStyles:T});let R=VCe.get(m);t.description&&(Array.isArray(R.description)?(R.shape=$Ce,R.description.push(t.description)):R.description?.length&&R.description.length>0?(R.shape=$Ce,R.description===m?R.description=[t.description]:R.description=[R.description,t.description]):(R.shape=FCe,R.description=t.description),R.description=Xn.sanitizeTextOrArray(R.description,C)),R.description?.length===1&&R.shape===$Ce&&(R.type==="group"?R.shape=But:R.shape=FCe),!R.type&&t.doc&&(Pe.info("Setting cluster for XCX",m,ajr(t)),R.type="group",R.isGroup=!0,R.dir=ajr(t),R.shape=t.type===BCe?GCe:But,R.colorIndex=vdi(R.shape,m,r,E),R.cssClasses=`${R.cssClasses} ${tjr} ${h?rjr:""}`);let L={labelStyle:"",shape:R.shape,label:R.description,cssClasses:R.cssClasses,cssCompiledStyles:[],cssStyles:R.cssStyles,id:m,dir:R.dir,domId:zut(m,OD),type:R.type,isGroup:R.type==="group",colorIndex:R.colorIndex,padding:8,rx:10,ry:10,look:f,labelType:"markdown"};if(L.shape===GCe&&(L.label=""),r&&r.id!=="root"&&(Pe.trace("Setting node ",m," to be child of its parent ",r.id),L.parentId=r.id),L.centerLabel=!0,t.note){let _={labelStyle:"",shape:KGr,label:t.note.text,labelType:"markdown",cssClasses:ejr,cssStyles:[],cssCompiledStyles:[],id:m+ijr+"-"+OD,domId:zut(m,OD,Gut),type:"node",isGroup:!1,padding:C.flowchart?.padding,look:f,position:t.note.position},I=m+jut,N={labelStyle:"",shape:JGr,label:t.note.text,cssClasses:R.cssClasses,cssStyles:[],id:m+jut,domId:zut(m,OD,$ut),type:"group",isGroup:!0,padding:16,look:f,position:t.note.position};OD++,N.id=I,_.parentId=I,UCe(s,N,d),UCe(s,_,d),UCe(s,L,d);let B=m,O=_.id;t.note.position==="left of"&&(B=_.id,O=m),l.push({id:B+"-"+O,start:B,end:O,arrowhead:"none",arrowTypeEnd:"",style:Mut,labelStyle:"",classes:ZGr,pattern:"dashed",arrowheadStyle:Nut,labelpos:"c",labelType:Out,thickness:Put,look:f})}else UCe(s,L,d)}t.doc&&(Pe.trace("Adding nodes children "),wdi(t,t.doc,a,s,l,!h,f,d))},"dataFetcher"),ljr=i(()=>{VCe.clear(),OD=0,ojr=0,Yae.clear()},"reset")});var Vut,kdi,Cdi,ujr,Wut=ae(()=>{"use strict";ma();Yn();FA();PS();BS();Ma();zCe();Vut=i((r,t="TB")=>{if(!r.doc)return t;let a=t;for(let s of r.doc)s.stmt==="dir"&&(a=s.value);return a},"getDir"),kdi=i(function(r,t){return t.db.getClasses()},"getClasses"),Cdi=i(async function(r,t,a,s){Pe.info("REF0:"),Pe.info("Drawing state diagram (v2)",t);let{securityLevel:l,state:h,layout:f}=er();s.db.extract(s.db.getRootDocV2());let d=s.db.getData(),m=dy(t,l);d.type=s.type,d.layoutAlgorithm=Ty(f),d.nodeSpacing=h?.nodeSpacing||50,d.rankSpacing=h?.rankSpacing||50,er().look==="neo"?d.markers=["barbNeo"]:d.markers=["barb"],d.diagramId=t,await xy(d,m);let v=8;try{(typeof s.db.getLinks=="function"?s.db.getLinks():new Map).forEach((C,E)=>{let S=typeof E=="string"?E:typeof E?.id=="string"?E.id:"",R=d.nodes.find(O=>O.id===S);if(!S){Pe.warn("\u26A0\uFE0F Invalid or missing stateId from key:",JSON.stringify(E));return}let L=m.node()?.querySelectorAll("g.node, g.rough-node"),_;if(L?.forEach(O=>{let P=O.textContent?.trim();(O.id===R?.domId||P===S)&&(_=O)}),!_){Pe.warn("\u26A0\uFE0F Could not find node matching text:",S);return}let I=_.parentNode;if(!I){Pe.warn("\u26A0\uFE0F Node has no parent, cannot wrap:",S);return}let N=document.createElementNS("http://www.w3.org/2000/svg","a"),B=C.url.replace(/^"+|"+$/g,"");if(N.setAttributeNS("http://www.w3.org/1999/xlink","xlink:href",B),N.setAttribute("target","_blank"),C.tooltip){let O=C.tooltip.replace(/^"+|"+$/g,"");N.setAttribute("title",O),_.setAttribute("title",O)}I.replaceChild(N,_),N.appendChild(_),Pe.info("\u{1F517} Wrapped node in <a> tag for:",S,C.url)})}catch(T){Pe.error("\u274C Error injecting clickable links:",T)}Va.insertTitle(m,"statediagramTitleText",h?.titleTopMargin??25,s.db.getDiagramTitle()),Sm(m,v,AW,h?.useMaxWidth??!0)},"draw"),ujr={getClasses:kdi,draw:Cdi,getDir:Vut}});var zb,fjr,djr,WCe,HCe,pjr=ae(()=>{"use strict";zo();QN();ma();Yn();Ma();nl();Au();IA();cjr();Wut();zCe();zb={START_NODE:"[*]",START_TYPE:"start",END_NODE:"[*]",END_TYPE:"end",COLOR_KEYWORD:"color",FILL_KEYWORD:"fill",BG_FILL:"bgFill",STYLECLASS_SEP:","},fjr=i(()=>new Map,"newClassesList"),djr=i(()=>({relations:[],states:new Map,documents:{}}),"newDoc"),WCe=i(r=>JSON.parse(JSON.stringify(r)),"clone"),HCe=class{constructor(t){this.version=t;this.nodes=[];this.edges=[];this.rootDoc=[];this.classes=fjr();this.documents={root:djr()};this.currentDocument=this.documents.root;this.startEndCount=0;this.dividerCnt=0;this.links=new Map;this.funs=[];this.getAccTitle=Vs;this.setAccTitle=Os;this.getAccDescription=Ws;this.setAccDescription=$s;this.setDiagramTitle=io;this.getDiagramTitle=Ks;this.clear(),this.setRootDoc=this.setRootDoc.bind(this),this.getDividerId=this.getDividerId.bind(this),this.setDirection=this.setDirection.bind(this),this.trimColon=this.trimColon.bind(this),this.bindFunctions=this.bindFunctions.bind(this)}static{i(this,"StateDB")}static{this.relationType={AGGREGATION:0,EXTENSION:1,COMPOSITION:2,DEPENDENCY:3}}extract(t){this.clear(!0);for(let l of Array.isArray(t)?t:t.doc)switch(l.stmt){case ND:this.addState(l.id.trim(),l.type,l.doc,l.description,l.note);break;case qae:this.addRelation(l.state1,l.state2,l.description);break;case WGr:this.addStyleClass(l.id.trim(),l.classes);break;case HGr:this.handleStyleDef(l);break;case qGr:this.setCssClass(l.id.trim(),l.styleClass);break;case"click":this.addLink(l.id,l.url,l.tooltip);break}let a=this.getStates(),s=er();ljr(),RW(void 0,this.getRootDocV2(),a,this.nodes,this.edges,!0,s.look,this.classes);for(let l of this.nodes)if(Array.isArray(l.label)){if(l.description=l.label.slice(1),l.isGroup&&l.description.length>0)throw new Error(`Group nodes can only have label. Remove the additional description for node [${l.id}]`);l.label=l.label[0]}}handleStyleDef(t){let a=t.id.trim().split(","),s=t.styleClass.split(",");for(let l of a){let h=this.getState(l);if(!h){let f=l.trim();this.addState(f),h=this.getState(f)}h&&(h.styles=s.map(f=>f.replace(/;/g,"")?.trim()))}}setRootDoc(t){Pe.info("Setting root doc",t),this.rootDoc=t,this.version===1?this.extract(t):this.extract(this.getRootDocV2())}docTranslator(t,a,s){if(a.stmt===qae){this.docTranslator(t,a.state1,!0),this.docTranslator(t,a.state2,!1);return}if(a.stmt===ND&&(a.id===zb.START_NODE?(a.id=t.id+(s?"_start":"_end"),a.start=s):a.id=a.id.trim()),a.stmt!==xB&&a.stmt!==ND||!a.doc)return;let l=[],h=[];for(let f of a.doc)if(f.type===BCe){let d=WCe(f);d.doc=WCe(h),l.push(d),h=[]}else h.push(f);if(l.length>0&&h.length>0){let f={stmt:ND,id:FJe(),type:"divider",doc:WCe(h)};l.push(WCe(f)),a.doc=l}a.doc.forEach(f=>this.docTranslator(a,f,!0))}getRootDocV2(){return this.docTranslator({id:xB,stmt:xB},{id:xB,stmt:xB,doc:this.rootDoc},!0),{id:xB,doc:this.rootDoc}}addState(t,a=TB,s=void 0,l=void 0,h=void 0,f=void 0,d=void 0,m=void 0){let b=t?.trim();if(!this.currentDocument.states.has(b))Pe.info("Adding state ",b,l),this.currentDocument.states.set(b,{stmt:ND,id:b,descriptions:[],type:a,doc:s,note:h,classes:[],styles:[],textStyles:[]});else{let v=this.currentDocument.states.get(b);if(!v)throw new Error(`State not found: ${b}`);v.doc||(v.doc=s),v.type||(v.type=a)}if(l&&(Pe.info("Setting state description",b,l),(Array.isArray(l)?l:[l]).forEach(T=>this.addDescription(b,T.trim()))),h){let v=this.currentDocument.states.get(b);if(!v)throw new Error(`State not found: ${b}`);v.note=h,v.note.text=Xn.sanitizeText(v.note.text,er())}f&&(Pe.info("Setting state classes",b,f),(Array.isArray(f)?f:[f]).forEach(T=>this.setCssClass(b,T.trim()))),d&&(Pe.info("Setting state styles",b,d),(Array.isArray(d)?d:[d]).forEach(T=>this.setStyle(b,T.trim()))),m&&(Pe.info("Setting state styles",b,d),(Array.isArray(m)?m:[m]).forEach(T=>this.setTextStyle(b,T.trim())))}clear(t){this.nodes=[],this.edges=[],this.funs=[this.setupToolTips.bind(this)],this.documents={root:djr()},this.currentDocument=this.documents.root,this.startEndCount=0,this.classes=fjr(),t||(this.links=new Map,Ds())}getState(t){return this.currentDocument.states.get(t)}getStates(){return this.currentDocument.states}logDocuments(){Pe.info("Documents = ",this.documents)}getRelations(){return this.currentDocument.relations}addLink(t,a,s){this.links.set(t,{url:a,tooltip:s}),Pe.warn("Adding link",t,a,s)}getLinks(){return this.links}startIdIfNeeded(t=""){return t===zb.START_NODE?(this.startEndCount++,`${zb.START_TYPE}${this.startEndCount}`):t}startTypeIfNeeded(t="",a=TB){return t===zb.START_NODE?zb.START_TYPE:a}endIdIfNeeded(t=""){return t===zb.END_NODE?(this.startEndCount++,`${zb.END_TYPE}${this.startEndCount}`):t}endTypeIfNeeded(t="",a=TB){return t===zb.END_NODE?zb.END_TYPE:a}addRelationObjs(t,a,s=""){let l=this.startIdIfNeeded(t.id.trim()),h=this.startTypeIfNeeded(t.id.trim(),t.type),f=this.startIdIfNeeded(a.id.trim()),d=this.startTypeIfNeeded(a.id.trim(),a.type);this.addState(l,h,t.doc,t.description,t.note,t.classes,t.styles,t.textStyles),this.addState(f,d,a.doc,a.description,a.note,a.classes,a.styles,a.textStyles),this.currentDocument.relations.push({id1:l,id2:f,relationTitle:Xn.sanitizeText(s,er())})}addRelation(t,a,s){if(typeof t=="object"&&typeof a=="object")this.addRelationObjs(t,a,s);else if(typeof t=="string"&&typeof a=="string"){let l=this.startIdIfNeeded(t.trim()),h=this.startTypeIfNeeded(t),f=this.endIdIfNeeded(a.trim()),d=this.endTypeIfNeeded(a);this.addState(l,h),this.addState(f,d),this.currentDocument.relations.push({id1:l,id2:f,relationTitle:s?Xn.sanitizeText(s,er()):void 0})}}addDescription(t,a){let s=this.currentDocument.states.get(t),l=a.startsWith(":")?a.replace(":","").trim():a;s?.descriptions?.push(Xn.sanitizeText(l,er()))}cleanupLabel(t){return t.startsWith(":")?t.slice(2).trim():t.trim()}getDividerId(){return this.dividerCnt++,`divider-id-${this.dividerCnt}`}addStyleClass(t,a=""){this.classes.has(t)||this.classes.set(t,{id:t,styles:[],textStyles:[]});let s=this.classes.get(t);a&&s&&a.split(zb.STYLECLASS_SEP).forEach(l=>{let h=l.replace(/([^;]*);/,"$1").trim();if(RegExp(zb.COLOR_KEYWORD).exec(l)){let d=h.replace(zb.FILL_KEYWORD,zb.BG_FILL).replace(zb.COLOR_KEYWORD,zb.FILL_KEYWORD);s.textStyles.push(d)}s.styles.push(h)})}getClasses(){return this.classes}setupToolTips(t){let a=n_();mn(t).select("svg").selectAll("g.node, g.rough-node").on("mouseover",h=>{let f=mn(h.currentTarget),d=f.attr("title");if(d===null)return;let m=h.currentTarget?.getBoundingClientRect();a.transition().duration(200).style("opacity",".9"),a.style("left",window.scrollX+m.left+(m.right-m.left)/2+"px").style("top",window.scrollY+m.bottom+"px"),a.html(oy.sanitize(d)),f.classed("hover",!0)}).on("mouseout",h=>{a.transition().duration(500).style("opacity",0),mn(h.currentTarget).classed("hover",!1)})}setCssClass(t,a){t.split(",").forEach(s=>{let l=this.getState(s);if(!l){let h=s.trim();this.addState(h),l=this.getState(h)}l?.classes?.push(a)})}setStyle(t,a){this.getState(t)?.styles?.push(a)}setTextStyle(t,a){this.getState(t)?.textStyles?.push(a)}bindFunctions(t){this.funs.forEach(a=>{a(t)})}getDirectionStatement(){return this.rootDoc.find(t=>t.stmt==="dir")}getDirection(){return this.getDirectionStatement()?.value??"TB"}setDirection(t){let a=this.getDirectionStatement();a?a.value=t:this.rootDoc.unshift({stmt:"dir",value:t})}trimColon(t){return t.startsWith(":")?t.slice(1).trim():t.trim()}getData(){let t=er();for(let a of this.nodes)a.wrappingWidth??=t.state?.wrappingWidth,a.isGroup||(a.minWidth??=t.state?.minNodeWidth);return{nodes:this.nodes,edges:this.edges,other:{},config:t,direction:Vut(this.getRootDocV2())}}getConfig(){return er().state}}});var Sdi,Adi,gjr,mjr=ae(()=>{"use strict";A0();Sdi=i(r=>{let{theme:t,bkgColorArray:a,borderColorArray:s}=r;if(!S0(t,s))return"";let l=Pg(r.look),h=E0(a),f="";for(let d=0;d<lS(s);d++){let m=s[d],b=h?`fill: ${a[d%a.length]};`:"",v=`[data-look="${l}"][data-color-id="color-${d}"]`;f+=`
+
+    /* The title strip: \`rect.outer\` spans the whole composite and \`rect.inner\` covers
+       the body, so what stays visible of \`outer\` is the band behind the label. */
+    ${v}.statediagram-cluster rect.outer {
+      stroke: ${m};
+      ${b}
+    }
+
+    ${v}.statediagram-cluster rect.inner {
+      stroke: ${m};
+    }
+
+    /* Concurrency regions. Siblings of one composite share a slot, so a divided composite
+       reads as one thing split into parts rather than as several composites. */
+    ${v}.statediagram-cluster rect.divider {
+      stroke: ${m};
+      ${b}
+    }
+
+    /* handDrawn draws the same container as roughjs shapes rather than plain rects, so it
+       needs its own rules. \`roundedWithTitle\` and \`divider\` name those groups \`outer\`,
+       \`inner\` and \`divider\` to match the classic branch, which is what lets these
+       discriminate -- a bare \`.statediagram-cluster path\` rule reached the body as well and
+       tinted the whole composite, losing \`compositeBackground\` and diverging from what
+       classic and neo do.
+
+       roughjs emits two paths per shape and marks them: the filled shape carries
+       \`stroke="none"\` and the sketched outline carries \`fill="none"\`. Splitting on that is
+       what keeps \`fill\` off the outline -- a rough outline is open squiggles, not a closed
+       region, so filling it produces smears -- and keeps \`stroke\` off the fill shape, which
+       would otherwise gain an edge it was drawn without. */
+    ${v}.statediagram-cluster .outer path[stroke='none'] {
+      ${b}
+    }
+
+    ${v}.statediagram-cluster .outer path[fill='none'] {
+      stroke: ${m};
+    }
+
+    /* No \`.inner\` rule on purpose. The body shape is left entirely alone under handDrawn,
+       where a rect's \`inner\` counterpart cannot be recoloured safely: roughjs draws a
+       hachure fill as *stroked* lines, so its fill paths carry \`fill="none"\` exactly like
+       the outline and no selector separates them. An \`.inner\` stroke rule therefore
+       repainted the hatching of every alt composite in the palette colour instead of
+       leaving it on \`altBackground\`. The container still reads as palette-coloured: the
+       \`outer\` shape spans the whole composite, so its outline already frames the body. */
+
+    /* Regions split the same way, which is why \`divider\` fills solid rather than taking
+       roughjs's default hachure -- see the note on that call. Hatched, both of its paths
+       carried \`fill="none"\` and these two rules degenerated: the tint matched nothing and
+       the border rule repainted the hatching. */
+    ${v}.statediagram-cluster .divider path[stroke='none'] {
+      ${b}
+    }
+
+    ${v}.statediagram-cluster .divider path[fill='none'] {
+      stroke: ${m};
+    }
+    `}return f},"genColor"),Adi=i(r=>`
+${Sdi(r)}
+defs [id$="-barbEnd"] {
+    fill: ${r.transitionColor};
+    stroke: ${r.transitionColor};
+  }
+g.stateGroup text {
+  fill: ${r.nodeBorder};
+  stroke: none;
+  font-size: 10px;
+}
+g.stateGroup text {
+  fill: ${r.textColor};
+  stroke: none;
+  font-size: 10px;
+
+}
+g.stateGroup .state-title {
+  font-weight: bolder;
+  fill: ${r.stateLabelColor};
+}
+
+g.stateGroup rect {
+  fill: ${r.mainBkg};
+  stroke: ${r.nodeBorder};
+}
+
+g.stateGroup line {
+  stroke: ${r.lineColor};
+  stroke-width: ${r.strokeWidth||1};
+}
+
+.transition {
+  stroke: ${r.transitionColor};
+  stroke-width: ${r.strokeWidth||1};
+  fill: none;
+}
+
+.stateGroup .composit {
+  fill: ${r.background};
+  border-bottom: 1px
+}
+
+.stateGroup .alt-composit {
+  fill: #e0e0e0;
+  border-bottom: 1px
+}
+
+.state-note {
+  stroke: ${r.noteBorderColor};
+  fill: ${r.noteBkgColor};
+
+  text {
+    fill: ${r.noteTextColor};
+    stroke: none;
+    font-size: 10px;
+  }
+}
+
+.stateLabel .box {
+  stroke: none;
+  stroke-width: 0;
+  fill: ${r.mainBkg};
+  opacity: 0.5;
+}
+
+.edgeLabel .label rect {
+  fill: ${r.labelBackgroundColor};
+  opacity: 0.5;
+}
+.edgeLabel {
+  background-color: ${r.edgeLabelBackground};
+  p {
+    background-color: ${r.edgeLabelBackground};
+  }
+  rect {
+    opacity: 0.5;
+    background-color: ${r.edgeLabelBackground};
+    fill: ${r.edgeLabelBackground};
+  }
+  text-align: center;
+}
+.edgeLabel .label text {
+  fill: ${r.transitionLabelColor||r.tertiaryTextColor};
+}
+.label div .edgeLabel {
+  color: ${r.transitionLabelColor||r.tertiaryTextColor};
+}
+
+.stateLabel text {
+  fill: ${r.stateLabelColor};
+  font-size: 10px;
+  font-weight: bold;
+}
+
+.node circle.state-start {
+  fill: ${r.specialStateColor};
+  stroke: ${r.specialStateColor};
+}
+
+.node .fork-join {
+  fill: ${r.specialStateColor};
+  stroke: ${r.specialStateColor};
+}
+
+.node circle.state-end {
+  fill: ${r.innerEndBackground};
+  stroke: ${r.background};
+  stroke-width: 1.5
+}
+.end-state-inner {
+  fill: ${r.compositeBackground||r.background};
+  // stroke: ${r.background};
+  stroke-width: 1.5
+}
+
+.node rect {
+  fill: ${r.stateBkg||r.mainBkg};
+  stroke: ${r.stateBorder||r.nodeBorder};
+  stroke-width: ${r.strokeWidth||1}px;
+}
+.node polygon {
+  fill: ${r.mainBkg};
+  stroke: ${r.stateBorder||r.nodeBorder};;
+  stroke-width: ${r.strokeWidth||1}px;
+}
+[id$="-barbEnd"] {
+  fill: ${r.lineColor};
+}
+
+.statediagram-cluster rect {
+  fill: ${r.compositeTitleBackground};
+  stroke: ${r.stateBorder||r.nodeBorder};
+  stroke-width: ${r.strokeWidth||1}px;
+}
+
+.cluster-label, .nodeLabel {
+  color: ${r.stateLabelColor};
+  // line-height: 1;
+}
+
+.statediagram-cluster rect.outer {
+  rx: 5px;
+  ry: 5px;
+}
+.statediagram-state .divider {
+  stroke: ${r.stateBorder||r.nodeBorder};
+}
+
+.statediagram-state .title-state {
+  rx: 5px;
+  ry: 5px;
+}
+.statediagram-cluster.statediagram-cluster .inner {
+  fill: ${r.compositeBackground||r.background};
+}
+.statediagram-cluster.statediagram-cluster-alt .inner {
+  fill: ${r.altBackground?r.altBackground:"#efefef"};
+}
+
+.statediagram-cluster .inner {
+  rx:0;
+  ry:0;
+}
+
+.statediagram-state rect.basic {
+  rx: 5px;
+  ry: 5px;
+}
+.statediagram-state rect.divider {
+  stroke-dasharray: 10,10;
+  fill: ${r.altBackground?r.altBackground:"#efefef"};
+}
+
+.note-edge {
+  stroke-dasharray: 5;
+}
+
+.statediagram-note rect {
+  fill: ${r.noteBkgColor};
+  stroke: ${r.noteBorderColor};
+  stroke-width: 1px;
+  rx: 0;
+  ry: 0;
+}
+.statediagram-note rect {
+  fill: ${r.noteBkgColor};
+  stroke: ${r.noteBorderColor};
+  stroke-width: 1px;
+  rx: 0;
+  ry: 0;
+}
+
+.statediagram-note text {
+  fill: ${r.noteTextColor};
+}
+
+.statediagram-note .nodeLabel {
+  color: ${r.noteTextColor};
+}
+.statediagram .edgeLabel {
+  color: red; // ${r.noteTextColor};
+}
+
+[id$="-dependencyStart"], [id$="-dependencyEnd"] {
+  fill: ${r.lineColor};
+  stroke: ${r.lineColor};
+  stroke-width: ${r.strokeWidth||1};
+}
+
+.statediagramTitleText {
+  text-anchor: middle;
+  font-size: 18px;
