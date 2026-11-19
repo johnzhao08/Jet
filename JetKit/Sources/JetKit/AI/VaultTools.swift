@@ -138,19 +138,24 @@ public struct VaultTools {
         guard !trimmed.isEmpty, !parts.contains(where: { $0.isEmpty || $0 == ".." || $0.hasPrefix(".") }) else {
             throw Failure("“\(path)” is not a valid path inside the vault.")
         }
+        _ = try root.vaultFile(trimmed)
         return parts.joined(separator: "/")
     }
 
     /// An existing note, by path or by title (with or without extension).
     private func existingNote(_ path: String) throws -> String {
         let relative = try clean(path)
-        if FileManager.default.fileExists(atPath: root.appendingPathComponent(relative).path) { return relative }
+        var directory: ObjCBool = false
+        if FileManager.default.fileExists(atPath: root.appendingPathComponent(relative).path, isDirectory: &directory) {
+            guard !directory.boolValue else { throw Failure("“\(relative)” is a folder.") }
+            return relative
+        }
         for ext in ["md", "ink"] where FileManager.default.fileExists(atPath: root.appendingPathComponent("\(relative).\(ext)").path) {
-            return "\(relative).\(ext)"
+            return try clean("\(relative).\(ext)")
         }
         let name = ((relative as NSString).lastPathComponent as NSString)
         let title = VaultSession.noteExtensions.contains(name.pathExtension.lowercased()) ? name.deletingPathExtension : name as String
-        if let found = titles[title.lowercased()] { return found }
+        if let found = titles[title.lowercased()] { return try clean(found) }
         throw Failure("No note “\(path)” in the vault. Use list_notes or search_notes to find it.")
     }
 
@@ -162,14 +167,14 @@ public struct VaultTools {
     }
 
     private func readText(_ relative: String) throws -> String {
-        guard let text = try? String(contentsOf: root.appendingPathComponent(relative), encoding: .utf8) else {
+        guard let text = try? String(contentsOf: root.vaultFile(relative), encoding: .utf8) else {
             throw Failure("Couldn't read “\(relative)”.")
         }
         return text
     }
 
     private func write(_ text: String, to relative: String) throws {
-        let url = root.appendingPathComponent(relative)
+        let url = try root.vaultFile(relative)
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try text.write(to: url, atomically: true, encoding: .utf8)
     }

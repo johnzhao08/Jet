@@ -179,7 +179,9 @@ public final class VaultSession {
             let url = directory.appendingPathComponent(name)
             var isDir: ObjCBool = false
             guard fm.fileExists(atPath: url.path, isDirectory: &isDir) else { continue }
-            let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+            let values = try? url.resourceValues(forKeys: [.isSymbolicLinkKey, .contentModificationDateKey])
+            guard values?.isSymbolicLink != true else { continue }
+            let modified = values?.contentModificationDate
             if isDir.boolValue {
                 nodes.append(FileNode(path: child, isDirectory: true, children: scan(root: root, relative: child), modified: modified))
             } else {
@@ -266,8 +268,6 @@ public final class VaultSession {
         return path
     }
 
-    /// Creates a folder (renamed "Name 2", "Name 3"… if taken) and returns its path.
-    @discardableResult
     /// Starts a new note from a button or shortcut. On iPad this asks for a name first;
     /// on the Mac the note is created right away as "Untitled" and renamed by editing its title.
     public func requestNewNote(kind: NoteKind, in folder: String? = nil) {
@@ -287,6 +287,8 @@ public final class VaultSession {
         createNote(kind: request.kind, in: request.folder, named: clean.isEmpty ? "Untitled" : clean)
     }
 
+    /// Creates a folder (renamed "Name 2", "Name 3"… if taken) and returns its path.
+    @discardableResult
     public func createFolder(in folder: String? = nil, named name: String = "New Folder") -> String? {
         var clean = name.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "/", with: "-")
         while clean.hasPrefix(".") { clean.removeFirst() }

@@ -97,7 +97,7 @@ private let pushUpdateCallback: git_push_update_reference_cb = { _, status, payl
 
 /// Thin wrapper over the parts of libgit2 that Jet's sync needs.
 public final class GitRepository {
-    private let repo: OpaquePointer
+    let repo: OpaquePointer
     public let path: String
 
     private static let initialize: Void = { _ = git_libgit2_init() }()
@@ -410,8 +410,18 @@ public final class GitRepository {
                     try ours.write(to: fileURL, options: .atomic)
                     let ext = fileURL.pathExtension
                     let base = fileURL.deletingPathExtension().lastPathComponent
-                    let copyName = "\(base) (\(conflictSuffix))" + (ext.isEmpty ? "" : ".\(ext)")
-                    try theirs.write(to: fileURL.deletingLastPathComponent().appendingPathComponent(copyName), options: .atomic)
+                    var number = 1
+                    while true {
+                        let suffix = conflictSuffix + (number == 1 ? "" : " \(number)")
+                        let name = "\(base) (\(suffix))" + (ext.isEmpty ? "" : ".\(ext)")
+                        let copy = fileURL.deletingLastPathComponent().appendingPathComponent(name)
+                        do {
+                            try theirs.write(to: copy, options: .withoutOverwriting)
+                            break
+                        } catch let error as CocoaError where error.code == .fileWriteFileExists {
+                            number += 1
+                        }
+                    }
                 }
             case let (ours?, nil):
                 // Deleted remotely, edited here: the edit wins.
