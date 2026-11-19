@@ -115,12 +115,15 @@ public final class VaultSession {
     @ObservationIgnored private var externalChangeTask: Task<Void, Never>?
     #endif
     @ObservationIgnored private var indexGeneration = 0
+    @ObservationIgnored private let indexStore: VaultIndexStore
+    @ObservationIgnored private var lookup = VaultLinks(paths: [])
 
     private func key(_ name: String) -> String { "vault.\(ref.id.uuidString).\(name)" }
 
     public init(ref: VaultRef) {
         self.ref = ref
         self.root = ref.url
+        self.indexStore = VaultIndexStore(root: ref.url)
         self.username = UserDefaults.standard.string(forKey: "vault.\(ref.id.uuidString).username") ?? ""
         self.autoSync = UserDefaults.standard.object(forKey: "vault.\(ref.id.uuidString).autoSync") as? Bool ?? true
         self.sortMode = (UserDefaults.standard.string(forKey: "vault.\(ref.id.uuidString).sortMode")).flatMap(SortMode.init) ?? .name
@@ -211,25 +214,24 @@ public final class VaultSession {
             titles[note.title.lowercased()] = note.path
         }
         notesByTitle = titles
+        lookup = VaultLinks(paths: Self.flatten(tree).map(\.path), aliases: index.aliases)
         rebuildIndex()
     }
 
-    /// Re-reads every Markdown note for links and tags, after `delay` (later calls replace earlier ones).
+    /// Reconciles changed note files against the saved index after edits settle.
     public func rebuildIndex(after delay: Duration = .zero) {
         indexTask?.cancel()
         indexGeneration += 1
         let generation = indexGeneration
         let root = root
-        let titles = notesByTitle
-        let markdown = allNotes.filter { $0.fileExtension != "ink" }.map(\.path)
+        let paths = Self.flatten(tree).map(\.path)
         indexTask = Task {
             if delay > .zero { try? await Task.sleep(for: delay) }
             guard !Task.isCancelled else { return }
-            let built = await Task.detached(priority: .utility) {
-                LinkIndex.build(root: root, markdown: markdown, titles: titles)
-            }.value
+            let built = await indexStore.update(root: root, paths: paths)
             guard generation == indexGeneration else { return }
             index = built
+            lookup.aliases = built.aliases
             indexVersion += 1
         }
     }
@@ -591,14 +593,8 @@ public final class VaultSession {
         }
     }
 
-    public func resolve(_ target: String) -> String? {
-        if exists(target), !isDirectory(target) { return target }
-        let name = (target as NSString).lastPathComponent
-        let ext = (name as NSString).pathExtension.lowercased()
-        if Self.noteExtensions.contains(ext) || ext.isEmpty {
-            return path(forTitle: (name as NSString).deletingPathExtension)
-        }
-        return Self.flatten(tree).first { $0.fileName.lowercased() == name.lowercased() }?.path
+    public func resolve(_ target: String, from source: String? = nil) -> String? {
+        lookup.resolve(target, from: source)
     }
 
     /// Notes with this tag or one nested under it (`#project` also finds `#project/jet`).
@@ -622,17 +618,18 @@ public final class VaultSession {
 
     /// Notes that mention this note's title or an alias as plain text, without linking to it.
     public func unlinkedMentions(of path: String) async -> [SearchHit] {
+        await indexTask?.value
         let title = ((path as NSString).lastPathComponent as NSString).deletingPathExtension
         // Longest first, so "Jet app" wins over "Jet" when both would match.
         let names = ([title] + (index.noteAliases[path] ?? [])).sorted { $0.count > $1.count }
         let linked = Set(index.backlinks[path] ?? [])
-        let candidates = allNotes.filter { $0.fileExtension != "ink" && $0.path != path && !linked.contains($0.path) }
-        let root = root
+        let candidates = allNotes.filter { $0.path != path && !linked.contains($0.path) }
+        let indexedText = index.text
         return await Task.detached(priority: .utility) {
             var hits: [SearchHit] = []
             for note in candidates {
                 if Task.isCancelled { return [] }
-                guard let text = try? String(contentsOf: root.appendingPathComponent(note.path), encoding: .utf8) else { continue }
+                guard let text = indexedText[note.path] else { continue }
                 for name in names {
                     guard let range = NoteSyntax.unlinkedMentionRanges(of: name, in: text).first else { continue }
                     let line = (text as NSString).lineRange(for: range)
@@ -647,6 +644,7 @@ public final class VaultSession {
 
     /// Turns the first plain-text mention of `target`'s title (or an alias) in `source` into a link.
     public func linkMention(in source: String, to target: String) {
+        guard (source as NSString).pathExtension.lowercased() != "ink" else { return }
         flushEditors()
         let title = ((target as NSString).lastPathComponent as NSString).deletingPathExtension
         let url = url(for: source)
@@ -702,32 +700,9 @@ public final class VaultSession {
 
     /// Full-text search of note titles and Markdown. A query starting with `#` lists notes with that tag.
     public func search(_ query: String) async -> [SearchHit] {
-        let needle = query.trimmingCharacters(in: .whitespaces)
-        guard !needle.isEmpty else { return [] }
-        if needle.hasPrefix("#"), !needle.contains(" ") {
-            return notes(taggedWith: needle).map { path in
-                SearchHit(path: path, snippet: (index.noteTags[path] ?? []).map { "#" + $0 }.joined(separator: " "))
-            }
-        }
-        let notes = allNotes
-        let root = root
-        return await Task.detached(priority: .userInitiated) {
-            var hits: [SearchHit] = []
-            for note in notes {
-                if Task.isCancelled { return [] }
-                var snippet: String?
-                if note.fileExtension != "ink",
-                   let text = try? String(contentsOf: root.appendingPathComponent(note.path), encoding: .utf8),
-                   let range = text.range(of: needle, options: [.caseInsensitive, .diacriticInsensitive]) {
-                    snippet = String(text[text.lineRange(for: range)]).trimmingCharacters(in: .whitespacesAndNewlines)
-                }
-                if snippet == nil, note.title.range(of: needle, options: [.caseInsensitive, .diacriticInsensitive]) != nil {
-                    snippet = ""
-                }
-                if let snippet { hits.append(SearchHit(path: note.path, snippet: snippet)) }
-            }
-            return hits
-        }.value
+        await indexTask?.value
+        let snapshot = index, notes = allNotes
+        return await Task.detached(priority: .userInitiated) { snapshot.search(query, notes: notes) }.value
     }
 
     // MARK: Editors

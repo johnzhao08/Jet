@@ -10,10 +10,12 @@ import PencilKit
 /// the vault folder and shows changes live. Nothing here deletes or overwrites a note wholesale:
 /// notes are created, edited by exact text replacement, or appended to.
 public struct VaultTools {
+    private let indexedFiles: VaultIndexFiles
     public let root: URL
 
     public init(root: URL) {
         self.root = root.standardizedFileURL.resolvingSymlinksInPath()
+        self.indexedFiles = VaultIndexFiles(root: self.root)
     }
 
     public struct Failure: LocalizedError {
@@ -50,7 +52,7 @@ public struct VaultTools {
               "page": ["type": "integer", "description": "Handwritten notes and PDFs only: the first page to return (1-based). Default 1."]],
              required: ["path"]),
         tool("search_notes",
-             "Search the text of every Markdown note and the titles of all notes. Start the query with # to find notes with a tag (\"#project\" also matches nested tags like #project/jet). Handwritten notes are only matched by title; open them with read_note to see their contents.",
+             "Search note titles, Markdown and recognized handwriting. Combine text, quoted phrases, /regex/, path:, tag:, [property:value] and task-todo: filters. #project also includes nested tags.",
              ["query": ["type": "string"]], required: ["query"]),
         tool("note_links",
              "Show how a note connects to the rest of the vault: the notes it links to with [[wikilinks]], the notes that link to it (backlinks), its #tags and its aliases.",
@@ -73,6 +75,8 @@ public struct VaultTools {
              ["path": ["type": "string", "description": "Note path or title."],
               "text": ["type": "string"]],
              required: ["path", "text"], mutates: true),
+        tool("check_links", "List unresolved wikilinks by source note, optionally restricted to one note.",
+             ["path": ["type": "string"]]),
     ]
 
     private static func tool(_ name: String, _ description: String, _ properties: [String: Any],
@@ -101,6 +105,13 @@ public struct VaultTools {
             case "edit_note":
                 return try editNote(string(arguments, "path"), old: string(arguments, "old_text"), new: string(arguments, "new_text"))
             case "append_to_note": return try append(string(arguments, "path"), text: string(arguments, "text"))
+            case "check_links":
+                let path = try (arguments["path"] as? String).map(existingNote)
+                let links = buildIndex().brokenLinks
+                let rows = links.keys.sorted().filter { path == nil || $0 == path }.flatMap { source in
+                    (links[source] ?? []).map { "\(source): [[\($0)]]" }
+                }
+                return .text(rows.isEmpty ? "No unresolved links." : rows.joined(separator: "\n"))
             default: throw Failure("Unknown tool \(name).")
             }
         } catch {
@@ -292,41 +303,31 @@ public struct VaultTools {
         let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !needle.isEmpty else { throw Failure("The query is empty.") }
         let notes = allNotes
-        if needle.hasPrefix("#"), !needle.contains(" ") {
-            let tag = String(needle.drop { $0 == "#" }).lowercased()
-            let index = buildIndex(notes)
-            let paths = Set(index.tags.filter { $0.key == tag || $0.key.hasPrefix(tag + "/") }.flatMap(\.value)).sorted()
-            return .text(paths.isEmpty ? "No notes tagged \(needle)." : paths.map { "\($0)  " + (index.noteTags[$0] ?? []).map { "#" + $0 }.joined(separator: " ") }.joined(separator: "\n"))
-        }
+        let index = buildIndex()
+        let hits = index.search(needle, notes: notes)
         var lines: [String] = []
-        for note in notes where lines.count < 100 {
-            let titleHit = note.title.range(of: needle, options: [.caseInsensitive, .diacriticInsensitive]) != nil
-            if note.fileExtension == "ink" {
-                if titleHit { lines.append("\(note.path)  (handwritten; title matches)") }
-                continue
-            }
-            guard let text = try? String(contentsOf: root.appendingPathComponent(note.path), encoding: .utf8) else { continue }
-            var matched = false
-            for (number, line) in text.components(separatedBy: "\n").enumerated()
-            where line.range(of: needle, options: [.caseInsensitive, .diacriticInsensitive]) != nil {
-                lines.append("\(note.path):\(number + 1): \(line.trimmingCharacters(in: .whitespaces).prefix(240))")
-                matched = true
+        for hit in hits {
+            let text = index.text[hit.path] ?? ""
+            var lineMatches = false
+            for (number, line) in text.components(separatedBy: "\n").enumerated() where line.localizedStandardContains(needle) {
+                lines.append("\(hit.path):\(number + 1): \(line.trimmingCharacters(in: .whitespaces).prefix(240))")
+                lineMatches = true
                 if lines.count >= 100 { break }
             }
-            if !matched, titleHit { lines.append("\(note.path)  (title matches)") }
+            if !lineMatches { lines.append("\(hit.path)  \(hit.snippet.prefix(240))") }
+            if lines.count >= 100 { break }
         }
         return .text(lines.isEmpty ? "No matches for “\(needle)”." : lines.joined(separator: "\n"))
     }
 
-    private func buildIndex(_ notes: [FileNode]) -> LinkIndex {
-        var map: [String: String] = [:]
-        for note in notes where map[note.title.lowercased()] == nil { map[note.title.lowercased()] = note.path }
-        return LinkIndex.build(root: root, markdown: notes.filter { $0.fileExtension != "ink" }.map(\.path), titles: map)
+    private func buildIndex() -> LinkIndex {
+        let paths = VaultSession.flatten(VaultSession.scan(root: root, relative: "")).map(\.path)
+        return indexedFiles.update(root: root, paths: paths)
     }
 
     func noteLinks(_ path: String) throws -> Result {
         let relative = try existingNote(path)
-        let index = buildIndex(allNotes)
+        let index = buildIndex()
         func list(_ paths: [String]?) -> String {
             guard let paths, !paths.isEmpty else { return "  (none)" }
             return paths.sorted().map { "  \($0)" }.joined(separator: "\n")
@@ -345,7 +346,7 @@ public struct VaultTools {
     }
 
     func listTags() -> Result {
-        let index = buildIndex(allNotes)
+        let index = buildIndex()
         let lines = index.tags
             .map { (name: index.tagNames[$0.key] ?? $0.key, count: $0.value.count) }
             .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
