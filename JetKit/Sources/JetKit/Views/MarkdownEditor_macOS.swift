@@ -12,6 +12,10 @@ struct MarkdownTextView: NSViewRepresentable {
     @Binding var text: String
     /// Text to put in at the cursor (a picture's embed), on a line of its own.
     @Binding var insertion: String?
+    var action: MarkdownEditorAction? = nil
+    var fontSize: CGFloat = 15
+    var completion: (MarkdownCompletion?) -> Void = { _ in }
+    var follow: (String) -> Void = { _ in }
     /// The picture file an embed (`![[a.png]]`) shows, to draw it under its line.
     var image: (String) -> URL? = { _ in nil }
     /// Saves dropped picture files in the vault and returns the embeds to insert for them.
@@ -62,6 +66,7 @@ struct MarkdownTextView: NSViewRepresentable {
 
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         let coordinator = context.coordinator
+        let resized = coordinator.parent.fontSize != fontSize
         coordinator.parent = self
         guard let textView = coordinator.textView else { return }
         if textView.string != text {
@@ -71,6 +76,11 @@ struct MarkdownTextView: NSViewRepresentable {
             let length = (text as NSString).length
             textView.setSelectedRange(NSRange(location: min(selection.location, length), length: 0))
             coordinator.restyle()
+        }
+        if resized { coordinator.restyle() }
+        if let action, coordinator.lastAction != action.id {
+            coordinator.lastAction = action.id
+            DispatchQueue.main.async { coordinator.perform(action) }
         }
         if let snippet = insertion {
             DispatchQueue.main.async {
@@ -83,6 +93,7 @@ struct MarkdownTextView: NSViewRepresentable {
     @MainActor
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: MarkdownTextView
+        var lastAction: UUID?
         weak var textView: MarkdownNSTextView?
         /// The paragraphs the cursor touches, whose hidden markup is shown.
         private var editingRange = NSRange(location: NSNotFound, length: 0)
@@ -110,6 +121,21 @@ struct MarkdownTextView: NSViewRepresentable {
             guard let textView else { return }
             let paragraphs = (textView.string as NSString).paragraphRange(for: textView.selectedRange())
             if paragraphs != editingRange { restyle() }
+            let next = MarkdownCompletion.at(textView.selectedRange(), in: textView.string)
+            DispatchQueue.main.async { self.parent.completion(next) }
+        }
+
+        func perform(_ action: MarkdownEditorAction) {
+            guard let view = textView else { return }
+            if case .reveal(let range) = action.kind {
+                guard NSMaxRange(range) <= (view.string as NSString).length else { return }
+                view.setSelectedRange(range)
+                view.scrollRangeToVisible(range)
+            } else if let (range, replacement, selection) = action.replacement(in: view.string, selection: view.selectedRange()) {
+                view.insertText(replacement, replacementRange: range)
+                view.setSelectedRange(selection)
+            }
+            view.window?.makeFirstResponder(view)
         }
 
         /// Restyles the whole note. Notes are small; past about 300,000 characters it stays plain.
@@ -154,6 +180,19 @@ final class MarkdownNSTextView: NSTextView {
     /// The widest the text column gets; wider windows centre it, like a page.
     static let columnWidth: CGFloat = 720
     private var pictureDrag = false
+
+    override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        let index = characterIndexForInsertion(at: point)
+        if let storage = textStorage, index < storage.length,
+           let target = storage.attribute(Self.linkTarget, at: index, effectiveRange: nil) as? String {
+            coordinator?.parent.follow(target)
+            return
+        }
+        super.mouseDown(with: event)
+    }
+
+    static let linkTarget = NSAttributedString.Key("JetEditorLink")
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
@@ -304,7 +343,7 @@ private final class PromiseState: @unchecked Sendable {
 /// Fonts, colours and spacing for the editor.
 @MainActor
 enum MarkdownTheme {
-    static let bodySize: CGFloat = 15
+    static var bodySize: CGFloat { CGFloat(UserDefaults.standard.object(forKey: "jet.markdown.fontSize") as? Double ?? 15) }
     static var bodyFont: NSFont { .systemFont(ofSize: bodySize) }
     static var monoFont: NSFont { .monospacedSystemFont(ofSize: bodySize - 1.5, weight: .regular) }
 
@@ -338,7 +377,7 @@ enum MarkdownTheme {
         let sizes: [CGFloat] = [28, 23, 19, 17, 15.5, 15]
         let weights: [NSFont.Weight] = [.bold, .bold, .semibold, .semibold, .semibold, .semibold]
         let index = min(max(level, 1), 6) - 1
-        return .systemFont(ofSize: sizes[index], weight: weights[index])
+        return .systemFont(ofSize: sizes[index] * bodySize / 15, weight: weights[index])
     }
 
     /// Markup that's out of the way: as good as gone, though still there to move the cursor through.
@@ -394,7 +433,15 @@ enum MarkdownTheme {
                                        .paragraphStyle: paragraph(indent: 16, firstLine: 16)], range: text.paragraphRange(for: range))
             case .link, .wikilink:
                 storage.addAttributes([.foregroundColor: NSColor.controlAccentColor], range: range)
+                var target = text.substring(with: range)
+                if span.role == .wikilink {
+                    target = String(target.split(separator: "|", maxSplits: 1).first ?? "")
+                } else if let address = text.substring(from: NSMaxRange(range)).firstMatch(of: #/^\]\(([^)]+)\)/#) {
+                    target = String(address.1)
+                }
+                storage.addAttribute(MarkdownNSTextView.linkTarget, value: target, range: range)
             case .url:
+                storage.addAttribute(MarkdownNSTextView.linkTarget, value: text.substring(with: range), range: range)
                 storage.addAttributes([.foregroundColor: NSColor.controlAccentColor,
                                        .underlineStyle: NSUnderlineStyle.single.rawValue,
                                        .underlineColor: adaptive { NSColor.controlAccentColor.withAlphaComponent(0.4) }], range: range)
