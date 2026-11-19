@@ -281,7 +281,7 @@ public final class VaultSession {
         }
     }
 
-    private func uniquePath(folder: String, base: String, ext: String) -> String {
+    func uniquePath(folder: String, base: String, ext: String) -> String {
         var candidate = base
         var counter = 2
         while true {
@@ -538,6 +538,7 @@ public final class VaultSession {
 
     /// Imports that need the user's say-so: shown by the vault window.
     public var importReview: ImportReview?
+    public var fileOperationError: String?
 
     /// Imports files, checking sizes first: anything over 100 MB is refused (git sync would fail on
     /// it), and 50–100 MB files are only imported once the user confirms.
@@ -712,24 +713,68 @@ public final class VaultSession {
 
     /// Opens the note for `date` in `Daily/`, creating it (from `Templates/Daily.md` if there is one).
     public func openDailyNote(for date: Date = .now) {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyy-MM-dd"
-        let name = formatter.string(from: date)
-        let path = "\(Self.dailyFolder)/\(name).md"
+        openPeriodicNote(.daily, for: date)
+    }
+
+    enum Period: String, CaseIterable {
+        case daily = "Daily", weekly = "Weekly", monthly = "Monthly"
+
+        func title(for date: Date) -> String {
+            let format = DateFormatter()
+            format.locale = Locale(identifier: "en_US_POSIX")
+            format.calendar = Calendar(identifier: .iso8601)
+            switch self {
+            case .daily: format.dateFormat = "yyyy-MM-dd"
+            case .monthly: format.dateFormat = "yyyy-MM"
+            case .weekly:
+                var iso = Calendar(identifier: .iso8601)
+                iso.timeZone = .current
+                return String(format: "%04d-W%02d", iso.component(.yearForWeekOfYear, from: date),
+                              iso.component(.weekOfYear, from: date))
+            }
+            return format.string(from: date)
+        }
+    }
+
+
+    func openPeriodicNote(_ period: Period, for date: Date = .now) {
+        let title = period.title(for: date)
+        let path = "\(period.rawValue)/\(title).md"
         if !exists(path) {
-            var text = (try? String(contentsOf: url(for: Self.dailyTemplate), encoding: .utf8)) ?? ""
-            text = text.replacingOccurrences(of: "{{date}}", with: name)
-                .replacingOccurrences(of: "{{title}}", with: name)
-                .replacingOccurrences(of: "{{weekday}}", with: date.formatted(.dateTime.weekday(.wide)))
-            do {
-                try FileManager.default.createDirectory(at: url(for: Self.dailyFolder), withIntermediateDirectories: true)
-                try text.write(to: url(for: path), atomically: true, encoding: .utf8)
-            } catch { return }
-            didWriteFile()
-            refreshTree()
+            let template = "Templates/\(period.rawValue).md"
+            guard writeTemplate(exists(template) ? template : nil, to: path, title: title, date: date) else { return }
         }
         selection = path
+    }
+
+    func createFromTemplate(_ template: String, named name: String) -> Bool {
+        let base = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "/", with: "-").trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        let path = uniquePath(folder: targetFolder, base: base.isEmpty ? "Untitled" : base, ext: "md")
+        let title = ((path as NSString).lastPathComponent as NSString).deletingPathExtension
+        guard writeTemplate(template, to: path, title: title, date: .now) else { return false }
+        selection = path
+        return true
+    }
+
+    func writeTemplate(_ template: String?, to path: String, title: String, date: Date) -> Bool {
+        do {
+            flushEditors()
+            let destination = try root.vaultFile(path)
+            let directory = destination.deletingLastPathComponent()
+            let source = try template.map { try String(contentsOf: root.vaultFile($0), encoding: .utf8) } ?? ""
+            let text = source.replacingOccurrences(of: "{{date}}", with: Period.daily.title(for: date))
+                .replacingOccurrences(of: "{{weekday}}", with: date.formatted(.dateTime.weekday(.wide)))
+                .replacingOccurrences(of: "{{title}}", with: title)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try Data(text.utf8).write(to: destination, options: .withoutOverwriting)
+            didWriteFile()
+            refreshTree()
+            return true
+        } catch {
+            fileOperationError = error.localizedDescription
+            return false
+        }
     }
 
     /// The day a daily note is for, if `path` is one.
