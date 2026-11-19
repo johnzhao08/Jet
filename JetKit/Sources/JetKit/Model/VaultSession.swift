@@ -359,20 +359,7 @@ public final class VaultSession {
         let name = ext.isEmpty ? clean : "\(clean).\(ext)"
         let newPath = folder.isEmpty ? name : "\(folder)/\(name)"
         guard newPath != path, !exists(newPath) else { return }
-        let wasSelected = selection == path
-        if wasSelected { selection = nil }
-        do {
-            try FileManager.default.moveItem(at: url(for: path), to: url(for: newPath))
-        } catch { return }
-        // A PDF's annotations travel with it.
-        let notes = Self.annotationsPath(for: path)
-        if exists(notes) {
-            try? FileManager.default.moveItem(at: url(for: notes), to: url(for: Self.annotationsPath(for: newPath)))
-        }
-        orderRenamed(from: path, to: newPath)
-        didWriteFile()
-        refreshTree()
-        if wasSelected { selection = newPath }
+        _ = relocate(path, to: newPath)
     }
 
     /// Moves a file or folder into `folder` ("" is the vault's top level), renamed "Name 2" if the
@@ -387,18 +374,21 @@ public final class VaultSession {
         let ext = isDirectory(path) ? "" : (name as NSString).pathExtension
         let base = ext.isEmpty ? name : (name as NSString).deletingPathExtension
         let newPath = uniquePath(folder: folder, base: base, ext: ext)
+        return relocate(path, to: newPath)
+    }
+
+    private func relocate(_ path: String, to newPath: String) -> String? {
         let selected = selection
-        if let selected, selected == path || selected.hasPrefix(path + "/") { selection = nil }
         do {
-            try FileManager.default.moveItem(at: url(for: path), to: url(for: newPath))
+            try VaultRelocation.move(root: root, from: path, to: newPath)
         } catch {
-            selection = selected
+            fileOperationError = error.localizedDescription
             return nil
         }
-        let notes = Self.annotationsPath(for: path)
-        if exists(notes) {
-            try? FileManager.default.moveItem(at: url(for: notes), to: url(for: Self.annotationsPath(for: newPath)))
-        }
+        navigatingHistory = true
+        defer { navigatingHistory = false }
+        remapNavigation(from: path, to: newPath)
+        contentVersion += 1
         orderRenamed(from: path, to: newPath)
         didWriteFile()
         refreshTree()

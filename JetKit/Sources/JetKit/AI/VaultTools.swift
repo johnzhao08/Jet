@@ -7,8 +7,7 @@ import PencilKit
 /// What AI assistants can do with a vault through Jet's MCP helper (`jet-mcp`).
 ///
 /// Everything works on the files directly, so it also works while Jet is closed; the Mac app watches
-/// the vault folder and shows changes live. Nothing here deletes or overwrites a note wholesale:
-/// notes are created, edited by exact text replacement, or appended to.
+/// the vault folder and shows changes live. Note moves use the same link updater as the app.
 public struct VaultTools {
     private let indexedFiles: VaultIndexFiles
     public let root: URL
@@ -75,6 +74,8 @@ public struct VaultTools {
              ["path": ["type": "string", "description": "Note path or title."],
               "text": ["type": "string"]],
              required: ["path", "text"], mutates: true),
+        tool("move_note", "Move or rename a note and update its incoming links. Use an unused destination path including its extension.",
+             ["path": ["type": "string"], "destination": ["type": "string"]], required: ["path", "destination"], mutates: true),
         tool("check_links", "List unresolved wikilinks by source note, optionally restricted to one note.",
              ["path": ["type": "string"]]),
     ]
@@ -105,6 +106,14 @@ public struct VaultTools {
             case "edit_note":
                 return try editNote(string(arguments, "path"), old: string(arguments, "old_text"), new: string(arguments, "new_text"))
             case "append_to_note": return try append(string(arguments, "path"), text: string(arguments, "text"))
+            case "move_note":
+                let source = try existingNote(string(arguments, "path"))
+                let destination = try clean(string(arguments, "destination"))
+                guard VaultSession.noteExtensions.contains((source as NSString).pathExtension.lowercased()),
+                      (source as NSString).pathExtension.lowercased() == (destination as NSString).pathExtension.lowercased()
+                else { throw Failure("Move a note using the same file extension.") }
+                try VaultRelocation.move(root: root, from: source, to: destination)
+                return .text("Moved \(source) to \(destination).")
             case "check_links":
                 let path = try (arguments["path"] as? String).map(existingNote)
                 let links = buildIndex().brokenLinks

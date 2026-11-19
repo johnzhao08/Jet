@@ -317,6 +317,59 @@ do {
     expect(index.outgoing["Plan.md"] == ["Graph View.md"], "outgoing links resolve to existing notes only")
     expect(index.backlinks["Plan.md"] == ["Graph View.md"], "a link to an alias counts as a backlink")
     expect(index.tags["jet/ideas"] == ["Plan.md"], "tag index")
+    expect(index.brokenLinks["Plan.md"] == ["Folder/Daily Notes.md"], "unresolved links retain their source and target")
+    let literalLinks = "~~~markdown\n[[Example]]\n~~~\n``[[Inline]]`` %%[[Private]]%% [[Live]]"
+    expect(NoteSyntax.references(in: literalLinks).map(\.target) == ["Live"],
+           "code samples and hidden comments keep their literal link text during a rename")
+    let store = VaultIndexFiles(root: vault)
+    try fm.createDirectory(at: vault.appendingPathComponent("Projects"), withIntermediateDirectories: true)
+    let task = "---\nstatus: active\n---\n- [ ] launch green rocket #team/test"
+    try task.write(to: vault.appendingPathComponent("Projects/Tasks.md"), atomically: true, encoding: .utf8)
+    func snapshot(_ store: VaultIndexFiles) -> (LinkIndex, [FileNode]) {
+        let notes = VaultSession.flatten(VaultSession.scan(root: vault, relative: ""))
+        return (store.update(root: vault, paths: notes.map(\.path)), notes)
+    }
+    // Write HELLO as PencilKit strokes so the search check goes through the production Vision pipeline.
+    let letters: [[[(Int, Int)]]] = [
+        [[(0,0),(0,60)],[(36,0),(36,60)],[(0,30),(36,30)]],
+        [[(36,0),(0,0),(0,60),(36,60)],[(0,30),(30,30)]],
+        [[(0,0),(0,60),(36,60)]], [[(0,0),(0,60),(36,60)]],
+        [[(18,0),(33,4),(36,15),(36,46),(31,57),(18,60),(5,56),(0,46),(0,15),(4,4),(18,0)]]
+    ]
+    var strokes: [PKStroke] = []
+    for (letter, paths) in letters.enumerated() {
+        for points in paths {
+            let samples = points.enumerated().flatMap { index, point -> [PKStrokePoint] in
+                let next = points[min(index + 1, points.count - 1)]
+                return (0..<5).map { step in
+                    let t = Double(step) / 5
+                    let x = Double(80 + letter * 56 + point.0) + Double(next.0 - point.0) * t
+                    let y = Double(100 + point.1) + Double(next.1 - point.1) * t
+                    return PKStrokePoint(location: CGPoint(x: x, y: y), timeOffset: Double(index * 5 + step) / 100,
+                                         size: CGSize(width: 6, height: 6), opacity: 1, force: 1, azimuth: 0, altitude: 0)
+                }
+            }
+            strokes.append(PKStroke(ink: PKInk(.pen, color: .black), path: PKStrokePath(controlPoints: samples, creationDate: Date())))
+        }
+    }
+    try inkFile(strokes).write(to: vault.appendingPathComponent("Handwriting.ink"))
+    let (first, files) = snapshot(store)
+    expect(first.search("hello", notes: files).map(\.path) == ["Handwriting.ink"], "Vision recognizes actual PencilKit strokes in search")
+    expect(first.search(#"path:Projects tag:team [status:active] task-todo:launch "green rocket" /gr.en/"#, notes: files).map(\.path) == ["Projects/Tasks.md"],
+           "combined property, path, tag, task, phrase and regex filters use the same note")
+    expect(first.search(#""rocket green""#, notes: files).isEmpty && first.search("/[/", notes: files).isEmpty,
+           "quoted phrases preserve word order and malformed regex is safe")
+    try "other content".write(to: vault.appendingPathComponent("Projects/Tasks.md"), atomically: true, encoding: .utf8)
+    expect(snapshot(store).0.search("#team", notes: files).isEmpty, "incremental indexing removes obsolete tags")
+    expect(snapshot(VaultIndexFiles(root: vault)).0.search("other content", notes: files).count == 1, "a fresh index uses persisted text")
+    let ref = "[[Graph View#Intro|graph]] ![[Graph View.md]] [relative](Graph%20View.md#Intro) `[[Graph View]]`"
+    try ref.write(to: vault.appendingPathComponent("Incoming.md"), atomically: true, encoding: .utf8)
+    try VaultRelocation.move(root: vault, from: "Graph View.md", to: "Projects/Network.md")
+    let updated = try String(contentsOf: vault.appendingPathComponent("Incoming.md"), encoding: .utf8)
+    expect(updated == "[[Network#Intro|graph]] ![[Network.md]] [relative](Projects/Network.md#Intro) `[[Graph View]]`",
+           "relocation updates wiki and Markdown links while preserving anchors, labels and code")
+    let (movedIndex, _) = snapshot(store)
+    expect(movedIndex.outgoing["Incoming.md"] == ["Projects/Network.md"], "relocation is reflected in the existing index")
 } catch {
     failures += 1
     print("  FAIL  threw: \(error.localizedDescription)")
