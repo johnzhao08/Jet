@@ -140,6 +140,22 @@ final class DragTests: XCTestCase {
         XCTAssertFalse(row("Folder/Nested.md").exists)
     }
     #else
+    func testQuickCaptureLinkFilesANote() {
+        app.open(URL(string: "jet://capture")!)
+        let title = app.textFields["Title (optional)"]
+        XCTAssertTrue(title.waitForExistence(timeout: 8), app.debugDescription)
+        title.tap()
+        title.typeText("Capture check")
+        let body = app.textViews.firstMatch
+        body.tap()
+        body.typeText("From the quick capture sheet")
+        app.buttons["Save"].tap()
+        waitGone(title)
+        if !row("Inbox").exists, app.buttons["Show Sidebar"].exists { app.buttons["Show Sidebar"].tap() }
+        if !row("Inbox/Capture check.md").exists { tapRow("Inbox") }
+        XCTAssertTrue(row("Inbox/Capture check.md").waitForExistence(timeout: 5), app.debugDescription)
+    }
+
     private func menuAction(_ path: String, _ items: [String]) {
         XCTAssertTrue(row(path).waitForExistence(timeout: 5))
         row(path).press(forDuration: 1.2)
