@@ -3,7 +3,7 @@ import Foundation
 /// Obsidian-compatible Markdown syntax: `[[wikilinks]]`, `#tags`, and YAML frontmatter properties.
 public enum NoteSyntax {
     /// A frontmatter property: `key: value`, `key: [a, b]`, or `key:` followed by `- item` lines.
-    public struct Property: Hashable, Sendable {
+    public struct Property: Codable, Hashable, Sendable {
         public let key: String
         public let values: [String]
     }
@@ -29,7 +29,8 @@ public enum NoteSyntax {
                 guard !key.isEmpty else { continue }
                 var values: [String]
                 if raw.hasPrefix("["), raw.hasSuffix("]") {
-                    values = raw.dropFirst().dropLast().split(separator: ",").map { unquote(String($0)) }
+                    values = (try? JSONDecoder().decode([String].self, from: Data(raw.utf8)))
+                        ?? raw.dropFirst().dropLast().split(separator: ",").map { unquote(String($0)) }
                 } else if raw.isEmpty {
                     values = []
                 } else {
@@ -44,6 +45,7 @@ public enum NoteSyntax {
 
     private static func unquote(_ value: String) -> String {
         var value = value.trimmingCharacters(in: .whitespaces)
+        if let decoded = try? JSONDecoder().decode(String.self, from: Data(value.utf8)) { return decoded }
         if value.count >= 2, let first = value.first, first == value.last, first == "\"" || first == "'" {
             value = String(value.dropFirst().dropLast())
         }
@@ -85,7 +87,7 @@ public enum NoteSyntax {
 
     // A tag starts after whitespace or at the start of a line.
     static let tagRegex = try! NSRegularExpression(pattern: #"(^|\s)#([\p{L}\p{N}_/-]+)"#, options: [.anchorsMatchLines])
-    static let codePattern = try! NSRegularExpression(pattern: #"```[\s\S]*?(```|\z)|`[^`\n]*`"#)
+    static let codePattern = try! NSRegularExpression(pattern: #"(?m)^ {0,3}(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:^ {0,3}\1(?:`*|~*)[ \t]*\r?$|\z)|(`+)[^\n]*?\2|%%[\s\S]*?(?:%%|\z)"#)
     static let wikilinkPattern = try! NSRegularExpression(pattern: #"!?\[\[[^\]]*\]\]"#)
 
     /// The text with every match of the patterns blanked out, keeping offsets intact.
@@ -144,42 +146,65 @@ public struct LinkIndex: Sendable {
     /// Note path -> its aliases.
     public var noteAliases: [String: [String]] = [:]
 
+    public var brokenLinks: [String: [String]] = [:]
+    public var noteProperties: [String: [NoteSyntax.Property]] = [:]
+    var text: [String: String] = [:]
+
     public init() {}
 
-    /// Reads every Markdown note under `root`. `titles` maps lowercased note titles to paths.
+    init(records: [String: IndexedNote], paths: [String]) {
+        for path in records.keys.sorted() {
+            let names = records[path]?.aliases ?? []
+            noteAliases[path] = names
+            for name in names where aliases[name.lowercased()] == nil { aliases[name.lowercased()] = path }
+        }
+        let resolver = VaultLinks(paths: paths, aliases: aliases)
+        for path in records.keys.sorted() {
+            if let note = records[path] { add(note, path: path, resolver: resolver) }
+        }
+    }
+
+    mutating func remove(_ path: String) {
+        for dest in outgoing.removeValue(forKey: path) ?? [] { backlinks[dest]?.removeAll { $0 == path } }
+        for tag in noteTags.removeValue(forKey: path) ?? [] {
+            let key = tag.lowercased()
+            tags[key]?.removeAll { $0 == path }
+            if tags[key]?.isEmpty == true { tags[key] = nil; tagNames[key] = nil }
+        }
+        text[path] = nil
+        noteProperties[path] = nil
+        brokenLinks[path] = nil
+    }
+
+    mutating func add(_ note: IndexedNote, path: String, resolver: VaultLinks) {
+        text[path] = note.text
+        noteProperties[path] = note.properties
+        noteTags[path] = note.tags
+        for tag in note.tags {
+            tags[tag.lowercased(), default: []].append(path)
+            if tagNames[tag.lowercased()] == nil { tagNames[tag.lowercased()] = tag }
+        }
+        var seen = Set<String>()
+        var missing = Set<String>()
+        for target in note.targets {
+            guard let dest = resolver.resolve(target.name, from: path, relative: target.relative) else {
+                if missing.insert(target.name).inserted { brokenLinks[path, default: []].append(target.name) }
+                continue
+            }
+            guard path != dest, VaultSession.noteExtensions.contains((dest as NSString).pathExtension.lowercased()),
+                  seen.insert(dest).inserted else { continue }
+            outgoing[path, default: []].append(dest)
+            backlinks[dest, default: []].append(path)
+        }
+    }
+
     public static func build(root: URL, markdown: [String], titles: [String: String]) -> LinkIndex {
-        var index = LinkIndex()
-        var rawLinks: [String: [String]] = [:]
+        var records: [String: IndexedNote] = [:]
         for path in markdown {
             guard let text = try? String(contentsOf: root.appendingPathComponent(path), encoding: .utf8) else { continue }
-            let properties = NoteSyntax.frontmatter(in: text).properties
-            rawLinks[path] = NoteSyntax.linkTargets(in: text)
-                + properties.flatMap(\.values).flatMap(NoteSyntax.linkTargets(in:))
-
-            let tags = NoteSyntax.tags(in: text, properties: properties)
-            index.noteTags[path] = tags
-            for tag in tags {
-                index.tags[tag.lowercased(), default: []].append(path)
-                if index.tagNames[tag.lowercased()] == nil { index.tagNames[tag.lowercased()] = tag }
-            }
-
-            let aliases = properties.filter { ["aliases", "alias"].contains($0.key.lowercased()) }.flatMap(\.values)
-            index.noteAliases[path] = aliases
-            for alias in aliases where titles[alias.lowercased()] == nil && index.aliases[alias.lowercased()] == nil {
-                index.aliases[alias.lowercased()] = path
-            }
+            records[path] = IndexedNote(text: text)
         }
-
-        for (source, targets) in rawLinks {
-            var seen = Set<String>()
-            for target in targets {
-                guard let path = titles[target.lowercased()] ?? index.aliases[target.lowercased()],
-                      path != source, seen.insert(path).inserted
-                else { continue }
-                index.outgoing[source, default: []].append(path)
-                index.backlinks[path, default: []].append(source)
-            }
-        }
-        return index
+        let paths = VaultSession.flatten(VaultSession.scan(root: root, relative: "")).map(\.path)
+        return LinkIndex(records: records, paths: Array(Set(paths + titles.values + markdown)))
     }
 }
