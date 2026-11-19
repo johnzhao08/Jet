@@ -7,6 +7,11 @@ import UniformTypeIdentifiers
 import CoreText
 @testable import JetKit
 
+if CommandLine.arguments.contains("--markdown-reader-test") {
+    try MainActor.assumeIsolated { try checkMarkdownReader() }
+    exit(0)
+}
+
 // `jet-selftest --editor-snapshot <folder>` renders the Mac Markdown editor on a sample note, in
 // light and dark, to look at without running the app.
 if let flag = CommandLine.arguments.firstIndex(of: "--editor-snapshot"), flag + 1 < CommandLine.arguments.count {

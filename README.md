@@ -5,7 +5,7 @@ Plain-file notes with git sync, for iPad and Mac.
 - **Vault** = a folder that is also a git repository. Markdown notes are `.md`; handwritten notes are `.ink`.
 - **iPad**: handwritten notes open straight into a PencilKit canvas. Pencil double-tap and squeeze follow
   Settings > Apple Pencil.
-- **Mac**: Markdown editing and reading; handwritten notes are view-only.
+- **Mac**: edit Markdown, draw on handwritten notes and annotate PDFs with a mouse, trackpad or pen tablet.
 - **Pens**: choose which tools are in the iPad tool picker, and their order (note's ••• menu →
   Pens & Tools): pen, monoline, fountain pen, highlighter, pencil, watercolor, crayon, eraser, ruler.
 - **Pictures**: insert photos or image files into handwritten notes (under the ink; hold a finger on one
@@ -33,12 +33,27 @@ Plain-file notes with git sync, for iPad and Mac.
   (sidebar list, tap to filter, search `#tag`), YAML frontmatter properties (`tags`, `aliases` resolve links),
   a graph view of this note or the whole vault (⇧⌘G), and daily notes in `Daily/` (⇧⌘D) made from
   `Templates/Daily.md` with `{{date}}`, `{{title}}` and `{{weekday}}`. Quick open (⌘O) fuzzy-matches titles
-  and aliases and creates the note if it doesn't exist.
+  and aliases and puts recently opened notes first when the search is empty.
+- **Search** combines full text with `path:Projects`, `tag:work`, `[status:active]`, `task-todo:review`,
+  quoted phrases and `/regular expressions/`. Jet indexes changed notes locally, including text
+  recognized in handwritten strokes. Recognized tags and wikilinks also appear in the graph and backlinks.
+  Renaming or moving notes or folders updates references in Markdown files, including relative links.
+- **Navigation and templates**: open Navigate → Command palette (⌘K) to find commands. Go back
+  with ⌘[ and forward with ⌘]. Choose “New note from template” to use any Markdown note as a
+  template in the current folder. Weekly and monthly notes use `Templates/Weekly.md` and
+  `Templates/Monthly.md` when present. Weekly filenames follow ISO week numbering (e.g. `2026-W47`).
+- **Markdown** supports link and tag completion, ⌘B and ⌘I, heading navigation, note and section
+  embeds, tables, callouts, highlights, comments, footnotes, syntax colouring, math and Mermaid.
+  The note toolbar includes font sizing, printing and PDF export.
+- **Vault library** shows notes by property in a table or board, conflict copies and deleted notes
+  recoverable from Git. Open a note’s history to restore a committed version.
+- **iPad capture** accepts shared text, links and files. Widgets and Shortcuts can open quick capture
+  or a daily note. Captures are queued locally until Jet can file them into the selected vault.
 - **AI (Mac)**: Jet.app bundles `jet-mcp`, an MCP server that lets Claude, Claude Code, Codex
   (ChatGPT) or any MCP client list, read, search, link-check and edit a vault. Handwritten notes are
   sent as page images so the model reads the handwriting; PDFs as their text plus page images with any
-  handwriting on them. It can create notes, edit text and append,
-  never delete. Set it up from the sidebar's ✨ button (or the ••• menu → Connect AI…), or by hand:
+  handwriting on them. It can create or move notes, update links and properties, edit or append text,
+  and show note history and diffs. Set it up from the sidebar's ✨ button (or the ••• menu → Connect AI…), or by hand:
   `jet-mcp --vault <folder>`. The Mac app shows changes made by other programs live.
 - **Sync**: commit, fetch, merge, push over HTTPS with a personal access token (no SSH).
   Two devices editing the same handwritten note are merged stroke by stroke; the same text note
@@ -62,6 +77,7 @@ Mac: the `JetMac` target is a regular Mac app, signed to run on this Mac only.
 ```
 
 Bumps the build number, commits and tags it, archives the iPad app, and uploads it to App Store Connect.
+The app, share extension and widget extension use the same App Group. The signing team must have access to provision all three targets.
 Testers in an internal TestFlight group with automatic distribution get it after Apple's processing.
 `--no-upload` exports the signed `.ipa` to `build.noindex/export` instead.
 
@@ -72,7 +88,10 @@ Testers in an internal TestFlight group with automatic distribution get it after
 ```
 
 Syncs two simulated devices through a local bare repository (fast-forward, merge, text conflict,
-ink merge, deletion), and clones a public repository over HTTPS.
+ink merge, deletion), and clones a public repository over HTTPS. Omit `--https` for the local checks,
+including link updates, handwriting recognition, properties, Git history and Mac ink.
+Run `./selftest.sh --markdown-reader-test` for the WebKit reader and PDF export,
+`./graphcheck.sh` for graph filters and layout, and `swift test --package-path JetKit` for capture recovery.
 
 Run the drag-and-drop UI regressions with Xcode and XcodeGen installed:
 
@@ -83,8 +102,8 @@ Run the drag-and-drop UI regressions with Xcode and XcodeGen installed:
 
 The iPad command defaults to the iPad Pro 11-inch (M5) simulator. Pass another
 `xcodebuild` destination as the second argument to select a different simulator.
-Each test launches a Debug-only isolated vault, performs native drag gestures, and
-checks the move survives relaunch. Results, including failure screenshots and UI
+The tests use isolated Debug vaults and exercise file moves, the command palette, Mac handwriting
+and PDF annotation, and quick capture on iPad. Results, including failure screenshots and UI
 hierarchies, are saved under `build.noindex/UIResults-*.xcresult`.
 
 ## Layout
