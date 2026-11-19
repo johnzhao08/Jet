@@ -1,4 +1,7 @@
 import XCTest
+#if os(macOS)
+import CoreGraphics
+#endif
 
 /// Sidebar behaviour against an isolated Debug-only vault (JET_UI_TEST_VAULT):
 /// Another.md, Folder/Nested.md, Root.md. On the Mac rows drag like Finder's list view; on iPad
@@ -93,6 +96,47 @@ final class DragTests: XCTestCase {
         query.click()
         query.typeText("path:missing")
         XCTAssertTrue(app.staticTexts["No matching notes"].waitForExistence(timeout: 5))
+    }
+
+    func testMouseStrokePersistsInHandwrittenNote() throws {
+        app.typeKey("k", modifierFlags: .command)
+        let command = app.textFields["command-search"]
+        XCTAssertTrue(command.waitForExistence(timeout: 5))
+        command.typeText("handwritten")
+        command.typeKey(.return, modifierFlags: [])
+        XCTAssertTrue(row("Untitled.ink").waitForExistence(timeout: 5))
+        assertStrokePersists(in: "Untitled.ink")
+    }
+
+    func testMouseAnnotationPersistsOnPDF() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appendingPathComponent("Page.pdf")
+        var page = CGRect(x: 0, y: 0, width: 612, height: 792)
+        let pdf = try XCTUnwrap(CGContext(file as CFURL, mediaBox: &page, nil))
+        pdf.beginPDFPage(nil)
+        pdf.endPDFPage()
+        pdf.closePDF()
+        app.open(file)
+        XCTAssertTrue(row("Page.pdf").waitForExistence(timeout: 8), app.debugDescription)
+        assertStrokePersists(in: "Page.pdf")
+    }
+
+    private func assertStrokePersists(in path: String) {
+        let surface = app.descendants(matching: .any).matching(identifier: "ink-surface").firstMatch
+        XCTAssertTrue(surface.waitForExistence(timeout: 5))
+        XCTAssertEqual(surface.value as? String, "0 strokes")
+        let window = app.windows.firstMatch
+        let start = window.coordinate(withNormalizedOffset: CGVector(dx: 0.64, dy: 0.5))
+        let end = window.coordinate(withNormalizedOffset: CGVector(dx: 0.76, dy: 0.55))
+        start.click(forDuration: 0.2, thenDragTo: end)
+        let written = expectation(for: NSPredicate(format: "value == %@", "1 stroke"), evaluatedWith: surface)
+        wait(for: [written], timeout: 8)
+        tapRow("Root.md")
+        tapRow(path)
+        XCTAssertTrue(surface.waitForExistence(timeout: 5))
+        XCTAssertEqual(surface.value as? String, "1 stroke")
     }
 
     private func drag(_ path: String, toRow target: String, at fraction: CGFloat) {

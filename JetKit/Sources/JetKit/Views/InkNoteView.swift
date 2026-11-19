@@ -2,7 +2,8 @@ import SwiftUI
 import PencilKit
 
 /// A handwritten note, or a PDF to write on. On iPad this is a live PencilKit canvas that is ready
-/// for the Pencil the moment it appears; on the Mac (no Pencil) it renders the same pages read-only.
+/// for the Pencil the moment it appears; on the Mac the same pages are written on with a mouse,
+/// trackpad or drawing tablet (`InkCanvas_macOS.swift`) and saved as the same PencilKit strokes.
 /// A PDF's ink is kept beside it in a hidden `.Name.pdf.ink`, so the PDF itself never changes.
 struct InkNoteView: View {
     let session: VaultSession
@@ -57,6 +58,8 @@ struct InkNoteView: View {
                               systemImage: model.showsToolPicker ? "pencil.tip.crop.circle.fill" : "pencil.tip.crop.circle")
                     }
                 }
+                #else
+                InkSurfaceToolbar(model: model)
                 #endif
                 ToolbarItem(placement: .primaryAction) {
                     Menu {
@@ -119,26 +122,17 @@ struct InkNoteView: View {
         )
         .ignoresSafeArea(.container, edges: .bottom)
         #else
+        // Reading the revision makes this view redraw the page whenever strokes are added or erased.
+        let _ = model.revision
         Group {
             if let pdf {
                 PDFPagesView(pages: pdf, drawing: model.drawing, images: model.images, root: session.root,
-                             generation: model.generation, session: session, place: placePicture)
+                             generation: model.generation, session: session, place: placePicture, writer: model)
             } else {
                 InkPagesView(drawing: model.drawing, images: model.images, root: session.root, paper: model.paper,
-                             generation: model.generation, session: session, place: placePicture)
+                             generation: model.generation, session: session, place: placePicture, writer: model)
             }
         }
-            .safeAreaInset(edge: .bottom) {
-                Label(pdf == nil ? "Handwriting is view-only on the Mac (drop in pictures). Write on iPad and sync."
-                                 : "Handwriting is view-only on the Mac (drop in pictures). Write on iPad and sync.",
-                      systemImage: "applepencil")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .frame(maxWidth: .infinity)
-                    .background(.bar)
-            }
         #endif
     }
 }
@@ -213,6 +207,17 @@ enum InkRenderer {
         return context.makeImage()
     }
 
+    /// A number that changes when the strokes touching `rect` change (one added, erased or replaced), so a
+    /// tile or page is redrawn only when its own ink did.
+    static func signature(of drawing: PKDrawing, in rect: CGRect) -> Int {
+        var hasher = Hasher()
+        for stroke in drawing.strokes where stroke.renderBounds.intersects(rect) {
+            hasher.combine(stroke.path.creationDate.timeIntervalSinceReferenceDate)
+            hasher.combine(stroke.path.count)
+        }
+        return hasher.finalize()
+    }
+
     static func cgImage(_ image: PlatformImage) -> CGImage? {
         #if os(macOS)
         var proposed = CGRect(origin: .zero, size: image.size)
@@ -268,6 +273,8 @@ struct InkPagesView: View {
     #if os(macOS)
     var session: VaultSession?
     var place: PicturePlacement?
+    /// The note being written on; the page takes its pen, mouse and tablet input.
+    var writer: InkNoteModel?
     #endif
 
     @Environment(\.colorScheme) private var colorScheme
@@ -281,25 +288,34 @@ struct InkPagesView: View {
             let pageHeight = max(inkBottom, geometry.size.height / scale)
             let count = max(1, Int((pageHeight / tile).rounded(.up)))
             ScrollView {
-                LazyVStack(spacing: 0) {
-                    ForEach(0..<count, id: \.self) { index in
-                        InkTile(
-                            drawing: drawing,
-                            images: images,
-                            root: root,
-                            rect: CGRect(x: 0, y: CGFloat(index) * tile, width: tile, height: tile),
-                            dark: colorScheme == .dark,
-                            generation: generation
-                        )
-                        .background(PaperLines(paper: paper, spacing: InkDocument.lineSpacing * scale))
-                        .frame(width: geometry.size.width, height: tile * scale)
-                        #if os(macOS)
-                        .modifier(PictureDropTarget(session: session, place: place,
-                                                    origin: CGPoint(x: 0, y: CGFloat(index) * tile), scale: scale,
-                                                    bounds: CGRect(x: 0, y: 0, width: tile, height: .infinity)))
-                        #endif
+                ZStack(alignment: .topLeading) {
+                    LazyVStack(spacing: 0) {
+                        ForEach(0..<count, id: \.self) { index in
+                            let rect = CGRect(x: 0, y: CGFloat(index) * tile, width: tile, height: tile)
+                            InkTile(
+                                drawing: drawing,
+                                images: images,
+                                root: root,
+                                rect: rect,
+                                dark: colorScheme == .dark,
+                                generation: generation,
+                                inkKey: InkRenderer.signature(of: drawing, in: rect)
+                            )
+                            .background(PaperLines(paper: paper, spacing: InkDocument.lineSpacing * scale))
+                            .frame(width: geometry.size.width, height: tile * scale)
+                        }
                     }
+                    #if os(macOS)
+                    if let writer {
+                        InkSurface(writer: writer, scale: scale, origin: .zero, dark: colorScheme == .dark)
+                            .frame(width: geometry.size.width, height: CGFloat(count) * tile * scale)
+                    }
+                    #endif
                 }
+                #if os(macOS)
+                .modifier(PictureDropTarget(session: session, place: place, origin: .zero, scale: scale,
+                                            bounds: { _ in CGRect(x: 0, y: 0, width: tile, height: .infinity) }))
+                #endif
             }
         }
     }
@@ -312,6 +328,8 @@ private struct InkTile: View {
     let rect: CGRect
     let dark: Bool
     let generation: Int
+    /// Changes when the ink on this tile does (see `InkRenderer.signature`).
+    let inkKey: Int
     @State private var image: PlatformImage?
 
     var body: some View {
@@ -322,7 +340,7 @@ private struct InkTile: View {
                 Color.clear
             }
         }
-        .task(id: "\(generation)-\(dark)-\(images.map(\.frame.debugDescription).joined())") {
+        .task(id: "\(generation)-\(dark)-\(inkKey)-\(images.map(\.frame.debugDescription).joined())") {
             let hasImages = images.contains { $0.frame.intersects(rect) }
             if hasImages {
                 image = InkRenderer.compose(drawing, images: images, root: root, rect: rect, scale: 2, dark: dark)
@@ -373,7 +391,7 @@ struct InkEmbedView: View {
     }
 }
 
-/// A PDF with its annotations, read-only (the Mac): each page rendered with its ink, lazily.
+/// A PDF with its annotations (the Mac): each page rendered with its ink, lazily, with the writing surface over it.
 struct PDFPagesView: View {
     let pages: PDFPages
     let drawing: PKDrawing
@@ -383,24 +401,42 @@ struct PDFPagesView: View {
     #if os(macOS)
     var session: VaultSession?
     var place: PicturePlacement?
+    /// The PDF's ink; the pages take its pen, mouse and tablet input.
+    var writer: InkNoteModel?
     #endif
+
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         GeometryReader { geometry in
             let scale = max((geometry.size.width - 32) / InkDocument.pageWidth, 0.01)
             ScrollView {
-                LazyVStack(spacing: PDFPages.gap * scale) {
-                    ForEach(pages.frames.indices, id: \.self) { index in
-                        PDFPageTile(pages: pages, index: index, drawing: drawing, images: images, root: root,
-                                    generation: generation)
-                            .frame(width: pages.frames[index].width * scale, height: pages.frames[index].height * scale)
-                            #if os(macOS)
-                            .modifier(PictureDropTarget(session: session, place: place, origin: pages.frames[index].origin,
-                                                        scale: scale, bounds: pages.frames[index]))
-                            #endif
-                            .shadow(color: .black.opacity(0.15), radius: 3, y: 1)
+                ZStack(alignment: .topLeading) {
+                    LazyVStack(spacing: PDFPages.gap * scale) {
+                        ForEach(pages.frames.indices, id: \.self) { index in
+                            PDFPageTile(pages: pages, index: index, drawing: drawing, images: images, root: root,
+                                        generation: generation,
+                                        inkKey: InkRenderer.signature(of: drawing, in: pages.frames[index]))
+                                .frame(width: pages.frames[index].width * scale, height: pages.frames[index].height * scale)
+                                .shadow(color: .black.opacity(0.15), radius: 3, y: 1)
+                        }
                     }
+                    #if os(macOS)
+                    if let writer {
+                        // Spans the pages and the gaps between them; the first page starts one gap down the page.
+                        InkSurface(writer: writer, scale: scale, origin: CGPoint(x: 0, y: PDFPages.gap),
+                                   dark: colorScheme == .dark)
+                            .frame(width: InkDocument.pageWidth * scale, height: (pages.height - 2 * PDFPages.gap) * scale)
+                    }
+                    #endif
                 }
+                #if os(macOS)
+                .modifier(PictureDropTarget(session: session, place: place, origin: CGPoint(x: 0, y: PDFPages.gap),
+                                            scale: scale, bounds: { point in
+                    pages.frames.min { verticalDistance(from: point.y, to: $0) < verticalDistance(from: point.y, to: $1) }
+                        ?? CGRect(x: 0, y: 0, width: InkDocument.pageWidth, height: pages.height)
+                }))
+                #endif
                 .padding(.vertical, PDFPages.gap * scale)
                 .frame(maxWidth: .infinity)
             }
@@ -416,6 +452,8 @@ private struct PDFPageTile: View {
     let images: [InkImage]
     let root: URL
     let generation: Int
+    /// Changes when the ink on this page does (see `InkRenderer.signature`).
+    let inkKey: Int
     @State private var image: PlatformImage?
     @Environment(\.displayScale) private var displayScale
 
@@ -425,7 +463,7 @@ private struct PDFPageTile: View {
                 Color.white
                 if let image { Image(platformImage: image).resizable() }
             }
-            .task(id: "\(generation)-\(Int(geometry.size.width))-\(images.count)") {
+            .task(id: "\(generation)-\(Int(geometry.size.width))-\(images.count)-\(inkKey)") {
                 let scale = geometry.size.width / InkDocument.pageWidth * displayScale
                 let rendered = pages.render(index, drawing: drawing, images: images, root: root, scale: scale)
                 image = rendered.map { InkRenderer.platformImage($0, scale: displayScale) }
@@ -435,19 +473,26 @@ private struct PDFPageTile: View {
 }
 
 #if os(macOS)
-/// Makes a page tile take dropped pictures, turning the drop point into page points.
+/// Distance from page height `y` to the vertical span of `frame` (0 inside it).
+private func verticalDistance(from y: CGFloat, to frame: CGRect) -> CGFloat {
+    y < frame.minY ? frame.minY - y : (y > frame.maxY ? y - frame.maxY : 0)
+}
+
+/// Makes the page take dropped pictures, turning the drop point into page points.
 private struct PictureDropTarget: ViewModifier {
     let session: VaultSession?
     let place: PicturePlacement?
-    /// The tile's top-left corner in page points, and view points per page point.
+    /// The dropped-on view's top-left corner in page points, and view points per page point.
     let origin: CGPoint
     let scale: CGFloat
-    let bounds: CGRect
+    /// The page area a picture dropped at a page point has to stay inside.
+    let bounds: (CGPoint) -> CGRect
 
     func body(content: Content) -> some View {
         if let session, let place {
             content.onDrop(of: FileDrop.acceptedTypes, delegate: PictureDrop(session: session) { path, pixels, at in
-                place(path, pixels, CGPoint(x: origin.x + at.x / scale, y: origin.y + at.y / scale), bounds)
+                let point = CGPoint(x: origin.x + at.x / scale, y: origin.y + at.y / scale)
+                place(path, pixels, point, bounds(point))
             })
         } else {
             content

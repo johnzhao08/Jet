@@ -982,5 +982,76 @@ do {
     print("  FAIL  threw: \(error.localizedDescription)")
 }
 
+print("18. Writing on the Mac with a mouse, trackpad or tablet")
+do {
+    func line(y: CGFloat, count: Int = 20, force: (Int) -> CGFloat?) -> [InkSample] {
+        (0..<count).map { InkSample(location: CGPoint(x: 100 + CGFloat($0) * 10, y: y), time: Double($0) * 0.01, force: force($0)) }
+    }
+    let pressed = InkStrokeBuilder.stroke(from: line(y: 200) { CGFloat($0) / 19 }, tool: .pen, swatch: .black, thickness: .medium)
+    expect(pressed?.ink.inkType == .pen && pressed?.path.count == 20, "a pen drag becomes one pen stroke with every point")
+    expect((pressed?.path[0].size.width ?? 99) < (pressed?.path[19].size.width ?? 0), "a pen gets wider as pressure rises")
+    let flat = InkStrokeBuilder.stroke(from: line(y: 200) { _ in nil }, tool: .pen, swatch: .blue, thickness: .medium)
+    expect(Set((0..<20).compactMap { flat?.path[$0].size.width }).count == 1, "a mouse, which has no pressure, writes at an even width")
+    expect(InkThickness.thick.width(for: .pen) > InkThickness.thin.width(for: .pen), "thickness changes the pen's width")
+
+    let marker = InkStrokeBuilder.stroke(from: line(y: 300) { CGFloat($0) / 19 }, tool: .highlighter, swatch: .yellow, thickness: .medium)
+    expect(marker?.ink.inkType == .marker, "the highlighter writes with PencilKit's marker ink")
+    expect(Set((0..<20).compactMap { marker?.path[$0].size.width }).count == 1, "the highlighter ignores pressure")
+    expect((marker?.path[0].size.width ?? 0) > (flat?.path[0].size.width ?? 99), "the highlighter is wider than the pen")
+    expect(InkStrokeBuilder.stroke(from: line(y: 300) { _ in nil }, tool: .eraser, swatch: .black, thickness: .medium) == nil,
+           "the eraser makes no stroke")
+    expect(InkStrokeBuilder.stroke(from: [], tool: .pen, swatch: .black, thickness: .medium) == nil, "nothing written, no stroke")
+
+    let jitter = (0..<30).map { InkSample(location: CGPoint(x: 50 + CGFloat($0) * 0.1, y: 50), time: Double($0) * 0.002) }
+    let tiny = InkStrokeBuilder.stroke(from: jitter, tool: .pen, swatch: .black, thickness: .thin)
+    expect((tiny?.path.count ?? 99) <= 5, "readings a hair apart collapse instead of piling up")
+    let click = InkStrokeBuilder.stroke(from: [InkSample(location: CGPoint(x: 80, y: 80), time: 1)], tool: .pen, swatch: .red, thickness: .thick)
+    expect(click.map { !PKDrawing(strokes: [$0]).bounds.isEmpty } == true, "a click leaves a visible dot")
+    let times = (0..<(pressed?.path.count ?? 0)).map { pressed!.path[$0].timeOffset }
+    expect(zip(times, times.dropFirst()).allSatisfy { $0 < $1 }, "point times only go forward")
+
+    // The strokes survive the .ink file exactly like the iPad's.
+    let both = PKDrawing(strokes: [pressed!, marker!])
+    let reread = InkDocument.decode(InkDocument(paper: .lined, drawing: both.dataRepresentation()).encoded())?.pkDrawing
+    expect(reread?.strokes.map(\.ink.inkType) == [.pen, .marker], "pen and highlighter strokes round-trip through the note file")
+
+    // Erasing takes whole strokes, only those touched.
+    let top = pressed!, bottom = InkStrokeBuilder.stroke(from: line(y: 400) { _ in nil }, tool: .pen, swatch: .black, thickness: .medium)!
+    let page = PKDrawing(strokes: [top, bottom])
+    expect(InkEraser.erasing(in: page, from: CGPoint(x: 150, y: 300), to: CGPoint(x: 160, y: 300), radius: 9) == nil,
+           "the eraser over empty paper changes nothing")
+    let wiped = InkEraser.erasing(in: page, from: CGPoint(x: 150, y: 196), to: CGPoint(x: 150, y: 204), radius: 9)
+    expect(wiped?.strokes.count == 1 && wiped?.strokes.first?.path.creationDate == bottom.path.creationDate,
+           "the eraser removes the stroke it touches and keeps the rest")
+    expect(InkEraser.erasing(in: page, from: CGPoint(x: 150, y: 100), to: CGPoint(x: 150, y: 500), radius: 9)?.strokes.isEmpty == true,
+           "a fast sweep still catches every stroke on its way")
+    var moved = top
+    moved.transform = CGAffineTransform(translationX: 0, y: 500)
+    expect(InkEraser.erasing(in: PKDrawing(strokes: [moved]), from: CGPoint(x: 150, y: 700), to: CGPoint(x: 150, y: 700), radius: 9)?.strokes.isEmpty == true
+           && InkEraser.erasing(in: PKDrawing(strokes: [moved]), from: CGPoint(x: 150, y: 200), to: CGPoint(x: 150, y: 200), radius: 9) == nil,
+           "the eraser follows a stroke that was moved")
+
+    // The model takes the strokes the surface hands it: it saves them, counts the change, and reopens with them.
+    let url = work.appendingPathComponent("Written on Mac.ink")
+    MainActor.assumeIsolated {
+        let model = InkNoteModel(url: url)
+        let before = model.renderVersion
+        var drawing = model.drawing
+        drawing.strokes.append(pressed!)
+        model.drawingChanged(drawing)
+        expect(model.renderVersion > before, "adding a stroke tells the page to redraw")
+        expect(model.surfaceTool == .pen && model.penSwatch == .black && model.highlighterSwatch == .yellow, "the pen starts black, the highlighter yellow")
+        model.saveNow()
+        expect(strokeCount(url) == 1, "a stroke written on the Mac is saved")
+        let erased = InkEraser.erasing(in: model.drawing, from: CGPoint(x: 150, y: 200), to: CGPoint(x: 150, y: 200), radius: 9)
+        model.drawingChanged(erased ?? model.drawing)
+        model.saveNow()
+        expect(strokeCount(url) == 0, "an erased stroke is saved as gone")
+        model.drawingChanged(PKDrawing(strokes: [pressed!]))
+        model.saveNow()
+        expect(InkNoteModel(url: url).drawing.strokes.count == 1, "reopening the note brings the stroke back")
+    }
+}
+
 print(failures == 0 ? "\nAll checks passed." : "\n\(failures) check(s) failed.")
 exit(failures == 0 ? 0 : 1)
