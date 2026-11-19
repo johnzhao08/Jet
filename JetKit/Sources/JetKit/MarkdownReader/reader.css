@@ -1,0 +1,17 @@
+:root { color-scheme: light dark; font-family: -apple-system, system-ui, sans-serif; line-height: 1.52; overflow-wrap: anywhere; }
+body { margin: 0 auto; max-width: 48rem; padding: 1.5rem; }
+main > :first-child { margin-top: 0; } h1,h2,h3,h4 { line-height: 1.2; }
+a { color: LinkText; } img,svg { max-width: 100%; height: auto; }
+table { border-collapse: collapse; max-width: 100%; } td,th { border: 1px solid GrayText; padding: .3em .7em; }
+blockquote, .embed { margin: .7em 0; padding: .3em 1em; border-inline-start: .2em solid GrayText; }
+.callout { background: color-mix(in srgb, Highlight 10%, transparent); border-color: Highlight; }
+pre,code { background: color-mix(in srgb, CanvasText 7%, transparent); border-radius: .3em; font-family: ui-monospace, monospace; }
+pre { overflow-x: auto; padding: .85em; } pre code { background: none; }
+.hljs-keyword,.hljs-selector-tag,.hljs-literal { color: light-dark(#9a2563,#ff92c8); }
+.hljs-string,.hljs-title,.hljs-attr { color: light-dark(#00665b,#7cdfc1); }
+.hljs-comment { color: GrayText; } .hljs-number,.hljs-built_in { color: light-dark(#8c4800,#ffba73); }
+.task { list-style: none; } input { margin-left: -1.3em; margin-right: .45em; }
+.properties { background: color-mix(in srgb, CanvasText 6%, transparent); padding: .7em 1em; border-radius: .6em; }
+.properties dt { font-weight: 600; } .properties dd { margin: 0 0 .3em; }
+math[display="block"] { overflow-x: auto; padding: .5em; }
+@media print { :root { color-scheme: light; } body { max-width: none; padding: 0; } pre { white-space: pre-wrap; } img,svg,tr { break-inside: avoid; } }
