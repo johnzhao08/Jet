@@ -296,17 +296,26 @@ private struct SidebarView: View {
         return FileDrop.outermost(picked, order: visibleRows.map(\.node.path))
     }
 
-    /// A click on a folder opens it (and makes it the folder you're working in); a click on a
-    /// folder that's already current closes it again.
+    /// On the Mac, a click on a folder opens it (and makes it the folder you're working in), and a
+    /// click on a folder that's already current closes it again. On iPad every tap opens or closes it.
     private func open(_ node: FileNode) {
         // After going back to the top level, a click on what's already open makes it current again.
+        #if os(macOS)
         let wasAtTop = session.workingFolder != nil
+        #endif
         session.workingFolder = nil
         if node.isDirectory {
+            #if os(iOS)
+            // iPad: every tap opens or closes the folder (the arrow is a small target for a finger),
+            // and makes it the folder you're working in.
+            session.selection = node.path
+            toggle(node.path)
+            #else
             if session.selection == node.path && !wasAtTop { toggle(node.path) } else {
                 session.selection = node.path
                 setOpen(node.path, true)
             }
+            #endif
         } else {
             session.selection = node.path
         }
