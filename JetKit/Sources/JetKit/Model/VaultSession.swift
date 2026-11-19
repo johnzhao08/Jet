@@ -123,6 +123,7 @@ public final class VaultSession {
     public var syncState: SyncState = .idle
     public var lastSync: Date?
     public var lastSyncSummary = ""
+    public private(set) var lastConflictPaths: [String] = []
     public var pendingChanges = 0
     public var remoteURL = ""
     public var username: String { didSet { defaults.set(username, forKey: key("username")) } }
@@ -172,6 +173,7 @@ public final class VaultSession {
         self.autoSync = UserDefaults.standard.object(forKey: "vault.\(ref.id.uuidString).autoSync") as? Bool ?? true
         self.sortMode = (UserDefaults.standard.string(forKey: "vault.\(ref.id.uuidString).sortMode")).flatMap(SortMode.init) ?? .name
         self.recentNotes = UserDefaults.standard.stringArray(forKey: "vault.\(ref.id.uuidString).recentNotes") ?? []
+        self.lastConflictPaths = UserDefaults.standard.stringArray(forKey: "vault.\(ref.id.uuidString).lastConflicts") ?? []
         self.manualOrder = Self.loadOrder(root: ref.url)
         if GitRepository.isRepository(at: root.path), let repo = try? GitRepository.open(at: root.path) {
             remoteURL = repo.remoteURL ?? ""
@@ -847,6 +849,10 @@ public final class VaultSession {
             }.value
             lastSync = Date()
             lastSyncSummary = report.summary
+            if !report.conflicts.isEmpty {
+                lastConflictPaths = Array(Set(report.conflicts)).sorted()
+                defaults.set(lastConflictPaths, forKey: key("lastConflicts"))
+            }
             syncState = .idle
             if report.workingTreeChanged {
                 refreshTree()

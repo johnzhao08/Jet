@@ -15,7 +15,7 @@ struct ConnectAIView: View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Connect AI to “\(session.ref.name)”").font(.title2.bold())
-                Text("Lets an AI assistant list, read, search and edit the notes in this vault, including handwritten notes, which it reads as images. It can create notes and change text, but can't delete anything. The notes it reads are sent to that assistant's service.")
+                Text("Lets an AI assistant list, read, search and edit the notes in this vault, including handwritten notes, which it reads as images. It can create and move notes, update links and properties, and read previous committed versions. The notes it reads are sent to that assistant's service.")
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }

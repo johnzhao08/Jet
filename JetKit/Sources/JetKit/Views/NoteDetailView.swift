@@ -5,6 +5,9 @@ struct NoteDetailView: View {
     let session: VaultSession
     let path: String
 
+    @State private var history = false
+    @State private var properties = false
+
     private var ext: String { (path as NSString).pathExtension.lowercased() }
     private var title: String {
         let name = (path as NSString).lastPathComponent
@@ -44,6 +47,26 @@ struct NoteDetailView: View {
                     }
             }
         }
+        .toolbar {
+            if VaultSession.noteExtensions.contains(ext) {
+                ToolbarItem(placement: .primaryAction) {
+                    Menu {
+                        Button("Version history", systemImage: "clock.arrow.circlepath") { history = true }
+                        if FileKind(path: path) == .markdown {
+                            Button("Edit properties", systemImage: "list.bullet.rectangle") { properties = true }
+                        }
+                    } label: { Label("Note actions", systemImage: "doc.badge.ellipsis") }
+                }
+            }
+        }
+        .sheet(isPresented: $history) {
+            NavigationStack {
+                NoteHistoryList(session: session, path: path)
+                    .navigationTitle("Version history")
+                    .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { history = false } } }
+            }.sheetSize(width: 600, height: 460)
+        }
+        .sheet(isPresented: $properties) { PropertyEditorView(session: session, path: path) }
         .navigationTitle(title)
         .inlineTitle()
     }

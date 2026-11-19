@@ -78,6 +78,15 @@ public struct VaultTools {
              ["path": ["type": "string"], "destination": ["type": "string"]], required: ["path", "destination"], mutates: true),
         tool("check_links", "List unresolved wikilinks by source note, optionally restricted to one note.",
              ["path": ["type": "string"]]),
+        tool("set_properties", "Set typed Markdown frontmatter properties. List values are arrays of strings. Dates use YYYY-MM-DD.",
+             ["path": ["type": "string"], "properties": ["type": "array", "items": ["type": "object",
+               "properties": ["key": ["type": "string"], "type": ["enum": ["text", "number", "list", "date", "checkbox"]],
+                              "value": ["type": ["string", "array", "number", "boolean"], "items": ["type": "string"]]],
+               "required": ["key", "type", "value"]]]], required: ["path", "properties"], mutates: true),
+        tool("note_history", "List committed versions of a note at its vault-relative path, including a deleted note.",
+             ["path": ["type": "string"]], required: ["path"]),
+        tool("note_diff", "Show a Git patch between two full commit IDs from note_history for the same note.",
+             ["path": ["type": "string"], "from": ["type": "string"], "to": ["type": "string"]], required: ["path", "from", "to"]),
     ]
 
     private static func tool(_ name: String, _ description: String, _ properties: [String: Any],
@@ -121,6 +130,20 @@ public struct VaultTools {
                     (links[source] ?? []).map { "\(source): [[\($0)]]" }
                 }
                 return .text(rows.isEmpty ? "No unresolved links." : rows.joined(separator: "\n"))
+            case "set_properties":
+                return try setProperties(string(arguments, "path"), properties: arguments["properties"])
+            case "note_history", "note_diff":
+                let path = try clean(string(arguments, "path"))
+                guard VaultSession.noteExtensions.contains((path as NSString).pathExtension.lowercased()) else {
+                    throw Failure("Expected a vault-relative note path including its extension.")
+                }
+                guard GitRepository.isRepository(at: root.path) else { return .text("No Git history yet.") }
+                let repo = try GitRepository.open(at: root.path)
+                if name == "note_diff" {
+                    return .text(try repo.noteDiff(path: path, from: string(arguments, "from"), to: string(arguments, "to")))
+                }
+                let rows = try repo.noteHistory(path: path).map { "\($0.commit)  \($0.date.formatted())  \($0.summary)" }
+                return .text(rows.isEmpty ? "No committed versions at this path." : rows.joined(separator: "\n"))
             default: throw Failure("Unknown tool \(name).")
             }
         } catch {
@@ -364,6 +387,30 @@ public struct VaultTools {
     }
 
     // MARK: Changing
+
+    private func setProperties(_ path: String, properties: Any?) throws -> Result {
+        let relative = try existingNote(path)
+        guard FileKind(path: relative) == .markdown, let entries = properties as? [[String: Any]], !entries.isEmpty
+        else { throw Failure("Provide a Markdown note and at least one property.") }
+        var text = try readText(relative)
+        for entry in entries {
+            guard let key = entry["key"] as? String, let type = entry["type"] as? String, let kind = PropertyKind(rawValue: type)
+            else { throw Failure("Each property needs a key and supported type.") }
+            let value: String
+            switch (kind, entry["value"]) {
+            case (.list, let strings as [String]):
+                guard !strings.contains(where: { $0.contains(where: \.isNewline) }) else { throw Failure("Each list item must be one line.") }
+                value = strings.joined(separator: "\n")
+            case (.number, let n as NSNumber) where CFGetTypeID(n) != CFBooleanGetTypeID(): value = n.stringValue
+            case (.checkbox, let n as NSNumber) where CFGetTypeID(n) == CFBooleanGetTypeID(): value = String(n.boolValue)
+            case (.text, let s as String), (.date, let s as String), (.number, let s as String), (.checkbox, let s as String): value = s
+            default: throw Failure("The value for “\(key)” does not match its type.")
+            }
+            text = try EditableProperty.set(key: key, kind: kind, value: value, in: text)
+        }
+        try write(text, to: relative)
+        return .text("Updated properties in \(relative).")
+    }
 
     func createNote(_ path: String, content: String) throws -> Result {
         let relative = try markdownPath(path)
