@@ -80,6 +80,21 @@ final class DragTests: XCTestCase {
         XCTAssertTrue(row("Weekly").waitForExistence(timeout: 5), app.debugDescription)
     }
 
+    func testGraphFiltersVisibleNotes() {
+        app.typeKey("k", modifierFlags: .command)
+        let command = app.textFields["command-search"]
+        XCTAssertTrue(command.waitForExistence(timeout: 5))
+        command.typeText("graph")
+        command.typeKey(.return, modifierFlags: [])
+        let filters = app.buttons["Filters and groups"]
+        XCTAssertTrue(filters.waitForExistence(timeout: 5))
+        filters.click()
+        let query = app.textFields["graph-filter"]
+        query.click()
+        query.typeText("path:missing")
+        XCTAssertTrue(app.staticTexts["No matching notes"].waitForExistence(timeout: 5))
+    }
+
     private func drag(_ path: String, toRow target: String, at fraction: CGFloat) {
         let source = row(path), destination = row(target)
         XCTAssertTrue(source.waitForExistence(timeout: 5) && destination.waitForExistence(timeout: 5))
