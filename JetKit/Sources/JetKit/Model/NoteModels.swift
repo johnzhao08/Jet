@@ -31,6 +31,19 @@ public final class InkNoteModel {
     /// The canvas's current tool mode, for showing in the toolbar. The canvas owns it.
     public var mode: InkMode = .draw
 
+    // The Mac's writing surface (mouse, trackpad or tablet). The toolbar sets these, the surface reads them.
+    public var surfaceTool: InkSurfaceTool = .pen
+    public var penSwatch: InkSwatch = .black
+    public var highlighterSwatch: InkSwatch = .yellow
+    public var thickness: InkThickness = .medium
+    /// Whether there is something to undo or redo, for the toolbar. The canvas owns them.
+    public var canUndo = false
+    public var canRedo = false
+    /// Bumped on every change to the strokes, so views that draw them know to redraw.
+    public private(set) var revision = 0
+    /// Changes whenever the page needs redrawing: its strokes changed, or it was reloaded from disk.
+    public var renderVersion: Int { generation + revision }
+
     @ObservationIgnored public private(set) var drawing = PKDrawing()
     /// Pictures on the page. Observed, so the Mac's read-only view redraws when they change.
     public private(set) var images: [InkImage] = []
@@ -68,6 +81,7 @@ public final class InkNoteModel {
     public func drawingChanged(_ newDrawing: PKDrawing) {
         guard newDrawing != drawing else { return }
         drawing = newDrawing
+        revision += 1
         scheduleSave()
     }
 
