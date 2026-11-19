@@ -67,9 +67,53 @@ public final class VaultSession {
         didSet {
             defaults.set(selection, forKey: key("lastNote"))
             // Opening something makes its folder where new things go again.
-            if selection != oldValue { workingFolder = nil }
+            guard selection != oldValue else { return }
+            workingFolder = nil
+            guard let selection else { return }
+            if !navigatingHistory {
+                if let oldValue, exists(oldValue) { backPaths.append(oldValue) }
+                forwardPaths.removeAll()
+            }
+            if Self.noteExtensions.contains((selection as NSString).pathExtension.lowercased()), !isDirectory(selection) {
+                recentNotes.removeAll { $0 == selection }
+                recentNotes.insert(selection, at: 0)
+                recentNotes = Array(recentNotes.prefix(50))
+                defaults.set(recentNotes, forKey: key("recentNotes"))
+            }
         }
     }
+    var showCommandPalette = false
+    var backPaths: [String] = []
+    var forwardPaths: [String] = []
+    private var navigatingHistory = false
+    private(set) var recentNotes: [String] = []
+
+    func navigate(back: Bool) {
+        var candidates = back ? backPaths : forwardPaths
+        var destination: String?
+        while let path = candidates.popLast() {
+            if path != selection, exists(path) { destination = path; break }
+        }
+        if back { backPaths = candidates } else { forwardPaths = candidates }
+        guard let destination else { return }
+        if let selection {
+            if back { forwardPaths.append(selection) } else { backPaths.append(selection) }
+        }
+        navigatingHistory = true
+        selection = destination
+        navigatingHistory = false
+    }
+
+    func remapNavigation(from old: String, to new: String) {
+        func remap(_ path: String) -> String {
+            path == old || path.hasPrefix(old + "/") ? new + path.dropFirst(old.count) : path
+        }
+        backPaths = backPaths.map(remap)
+        forwardPaths = forwardPaths.map(remap)
+        recentNotes = recentNotes.map(remap)
+        defaults.set(recentNotes, forKey: key("recentNotes"))
+    }
+
     /// Where new notes and folders go when chosen apart from what's open (the sidebar's Home, or a
     /// click on empty space: back to the top level, with the open note left open). Nil follows `selection`.
     public var workingFolder: String?
@@ -127,6 +171,7 @@ public final class VaultSession {
         self.username = UserDefaults.standard.string(forKey: "vault.\(ref.id.uuidString).username") ?? ""
         self.autoSync = UserDefaults.standard.object(forKey: "vault.\(ref.id.uuidString).autoSync") as? Bool ?? true
         self.sortMode = (UserDefaults.standard.string(forKey: "vault.\(ref.id.uuidString).sortMode")).flatMap(SortMode.init) ?? .name
+        self.recentNotes = UserDefaults.standard.stringArray(forKey: "vault.\(ref.id.uuidString).recentNotes") ?? []
         self.manualOrder = Self.loadOrder(root: ref.url)
         if GitRepository.isRepository(at: root.path), let repo = try? GitRepository.open(at: root.path) {
             remoteURL = repo.remoteURL ?? ""

@@ -102,7 +102,12 @@ struct QuickOpenView: View {
     /// Notes ranked by how well their title (or an alias, or the folder path) matches; letters in order also count.
     private var matches: [FileNode] {
         let notes = session.allNotes
-        guard !needle.isEmpty else { return Array(notes.prefix(50)) }
+        guard !needle.isEmpty else {
+            let byPath = Dictionary(uniqueKeysWithValues: notes.map { ($0.path, $0) })
+            let recent = session.recentNotes.compactMap { byPath[$0] }
+            let seen = Set(recent.map(\.path))
+            return Array((recent + notes.filter { !seen.contains($0.path) }).prefix(50))
+        }
         let scored = notes.compactMap { node -> (FileNode, Int)? in
             let names = [node.title] + (session.index.noteAliases[node.path] ?? [])
             let score = names.map { Self.score(needle, in: $0) }.max() ?? 0
