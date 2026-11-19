@@ -7,12 +7,24 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		22F114A515FD767836D9BB80 /* ShareView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBE45C7296FD107B8366D411 /* ShareView.swift */; };
+		2A4CFC9BDCE323A9E7BB6AA0 /* ShareModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D432C806E7C11D54F3A255EC /* ShareModel.swift */; };
+		44CF667881B5D87F7DD0B720 /* JetWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = C2F8A820F8E50A38C1B6A196 /* JetWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		5279384B946761E22CB36D76 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18BA418F99AE677FA2E4FE9C /* main.swift */; };
+		7452849A5D53EA5A4DCCA667 /* JetIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C88BD04D412EB44877D6CAB /* JetIntents.swift */; };
+		77569DB7FB083AD01D8E4341 /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E9C69B1049EAA8529032DB9 /* ShareViewController.swift */; };
+		7D4044789B7E5BC68BE5DEA3 /* JetCapture in Frameworks */ = {isa = PBXBuildFile; productRef = 1A6B64987CB058D393C73871 /* JetCapture */; };
+		8434F00D7BAA8F5AA06FA54B /* JetShortcuts.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0078B1FD2C342C290A3927D /* JetShortcuts.swift */; };
+		85977F77DC010F5120194B12 /* JetWidgets.swift in Sources */ = {isa = PBXBuildFile; fileRef = 016D7AABFC11AE08291FBD9B /* JetWidgets.swift */; };
+		8DEC6D707AF3B90D704463EE /* JetCapture in Frameworks */ = {isa = PBXBuildFile; productRef = E0613344A26DBC381AD0BC5C /* JetCapture */; };
 		945D12D25DECAB1B9E5A67D1 /* DragTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81303E498371A80D216F4BF6 /* DragTests.swift */; };
+		A3098150BFD89B70FAEFDBB9 /* JetCapture in Frameworks */ = {isa = PBXBuildFile; productRef = 3710D065C63046187DC03BE0 /* JetCapture */; };
 		AAD6EFC9D2B131373FCE155D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 9EC6B2C8D6C2F6A9B5AD76BB /* Assets.xcassets */; };
+		B756051661EF0E4E285D9C64 /* JetIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C88BD04D412EB44877D6CAB /* JetIntents.swift */; };
 		BA58E298E0CA03F9BF4A97C6 /* JetKit in Frameworks */ = {isa = PBXBuildFile; productRef = D4DA2710E5E1FB777C296EA8 /* JetKit */; };
 		C64CF0E9F8F0FB1F5E334399 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75DDD194400A733150806C15 /* main.swift */; };
 		CC34BEEFC8A8116060ED2853 /* DragTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81303E498371A80D216F4BF6 /* DragTests.swift */; };
+		D09B47B2D547DD45B78506AE /* JetShare.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 9936BB547F2EDD70F6D3754D /* JetShare.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		D373187B043411EA1703EC42 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18BA418F99AE677FA2E4FE9C /* main.swift */; };
 		F538C78DE216A50446AC26DB /* JetKit in Frameworks */ = {isa = PBXBuildFile; productRef = 9F8C0C5BDD9A4F44CDE6D533 /* JetKit */; };
 		F85C38792AA41F93CE25ABAE /* JetMCP in Resources */ = {isa = PBXBuildFile; fileRef = BAE29F77F0BB88335B7A1EE6 /* JetMCP */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
@@ -35,6 +47,13 @@
 			remoteGlobalIDString = 975626F73ADAF5926E25BF5B;
 			remoteInfo = JetMCP;
 		};
+		88ABCA881610CF41F71E2421 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 6EE3A1D34E09897651790964 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 27C12D84B56F4862805E52E5;
+			remoteInfo = JetShare;
+		};
 		A51D98D848EC35E068CB3131 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 6EE3A1D34E09897651790964 /* Project object */;
@@ -42,18 +61,48 @@
 			remoteGlobalIDString = CBE3AD1230D0E87C79364C75;
 			remoteInfo = JetMac;
 		};
+		F8C2ECAC910AFAA0BBEDA887 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 6EE3A1D34E09897651790964 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 942E57C448BFAC03146FA25A;
+			remoteInfo = JetWidgets;
+		};
 /* End PBXContainerItemProxy section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		A1C49E5D8C5490EAAA11A7C8 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				D09B47B2D547DD45B78506AE /* JetShare.appex in Embed Foundation Extensions */,
+				44CF667881B5D87F7DD0B720 /* JetWidgets.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
+		016D7AABFC11AE08291FBD9B /* JetWidgets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JetWidgets.swift; sourceTree = "<group>"; };
 		040597B6E838B4CC4C629A84 /* JetUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = JetUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		18BA418F99AE677FA2E4FE9C /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		395D913E8BEE7F52A101A8E3 /* Jet.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Jet.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		42432E9F880705CE62D3DF60 /* JetKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = JetKit; path = JetKit; sourceTree = SOURCE_ROOT; };
 		75DDD194400A733150806C15 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		81303E498371A80D216F4BF6 /* DragTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DragTests.swift; sourceTree = "<group>"; };
+		8C88BD04D412EB44877D6CAB /* JetIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JetIntents.swift; sourceTree = "<group>"; };
 		8D7A885ABFE9F83A22538117 /* JetMacUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = JetMacUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		9936BB547F2EDD70F6D3754D /* JetShare.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = JetShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		9E9C69B1049EAA8529032DB9 /* ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
 		9EC6B2C8D6C2F6A9B5AD76BB /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		BAE29F77F0BB88335B7A1EE6 /* JetMCP */ = {isa = PBXFileReference; includeInIndex = 0; path = JetMCP; sourceTree = BUILT_PRODUCTS_DIR; };
+		C2F8A820F8E50A38C1B6A196 /* JetWidgets.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = JetWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		D432C806E7C11D54F3A255EC /* ShareModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareModel.swift; sourceTree = "<group>"; };
+		EBE45C7296FD107B8366D411 /* ShareView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareView.swift; sourceTree = "<group>"; };
+		F0078B1FD2C342C290A3927D /* JetShortcuts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JetShortcuts.swift; sourceTree = "<group>"; };
 		F945FAF6164789F041AA17CA /* JetMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = JetMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -79,6 +128,23 @@
 			buildActionMask = 2147483647;
 			files = (
 				FF01FABBCA110EE50F7F8A18 /* JetKit in Frameworks */,
+				8DEC6D707AF3B90D704463EE /* JetCapture in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CB7937FEB294233C296547D9 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A3098150BFD89B70FAEFDBB9 /* JetCapture in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F99CD99AE60AD690D9C90C11 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7D4044789B7E5BC68BE5DEA3 /* JetCapture in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -100,7 +166,9 @@
 				F945FAF6164789F041AA17CA /* JetMac.app */,
 				8D7A885ABFE9F83A22538117 /* JetMacUITests.xctest */,
 				BAE29F77F0BB88335B7A1EE6 /* JetMCP */,
+				9936BB547F2EDD70F6D3754D /* JetShare.appex */,
 				040597B6E838B4CC4C629A84 /* JetUITests.xctest */,
+				C2F8A820F8E50A38C1B6A196 /* JetWidgets.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -111,6 +179,14 @@
 				586BD7B4D2465F94395C5CD6 /* jet-mcp */,
 			);
 			path = Tools;
+			sourceTree = "<group>";
+		};
+		41C8F599AD2176F3A67D8524 /* Intents */ = {
+			isa = PBXGroup;
+			children = (
+				8C88BD04D412EB44877D6CAB /* JetIntents.swift */,
+			);
+			path = Intents;
 			sourceTree = "<group>";
 		};
 		586BD7B4D2465F94395C5CD6 /* jet-mcp */ = {
@@ -129,6 +205,27 @@
 			path = App;
 			sourceTree = "<group>";
 		};
+		7A8EAE2A8BDE79EA59B3F1B0 /* Extensions */ = {
+			isa = PBXGroup;
+			children = (
+				ADA423A085108DE004EA63FE /* AppShortcuts */,
+				41C8F599AD2176F3A67D8524 /* Intents */,
+				96166AB42233E9E6329D9592 /* Share */,
+				A6182695902FB1483560D955 /* Widgets */,
+			);
+			path = Extensions;
+			sourceTree = "<group>";
+		};
+		96166AB42233E9E6329D9592 /* Share */ = {
+			isa = PBXGroup;
+			children = (
+				D432C806E7C11D54F3A255EC /* ShareModel.swift */,
+				EBE45C7296FD107B8366D411 /* ShareView.swift */,
+				9E9C69B1049EAA8529032DB9 /* ShareViewController.swift */,
+			);
+			path = Share;
+			sourceTree = "<group>";
+		};
 		A458CC77933BA0A15D78AB64 /* Resources */ = {
 			isa = PBXGroup;
 			children = (
@@ -137,10 +234,27 @@
 			path = Resources;
 			sourceTree = "<group>";
 		};
+		A6182695902FB1483560D955 /* Widgets */ = {
+			isa = PBXGroup;
+			children = (
+				016D7AABFC11AE08291FBD9B /* JetWidgets.swift */,
+			);
+			path = Widgets;
+			sourceTree = "<group>";
+		};
+		ADA423A085108DE004EA63FE /* AppShortcuts */ = {
+			isa = PBXGroup;
+			children = (
+				F0078B1FD2C342C290A3927D /* JetShortcuts.swift */,
+			);
+			path = AppShortcuts;
+			sourceTree = "<group>";
+		};
 		F4BB7E07DE10CED3116D9BC4 = {
 			isa = PBXGroup;
 			children = (
 				7A337AD0CDF2B13DD1FC67B4 /* App */,
+				7A8EAE2A8BDE79EA59B3F1B0 /* Extensions */,
 				FF9E0D016442E535DA7B3469 /* Packages */,
 				A458CC77933BA0A15D78AB64 /* Resources */,
 				3CC1AB58DC10021C258A974B /* Tools */,
@@ -177,6 +291,44 @@
 			productName = JetMacUITests;
 			productReference = 8D7A885ABFE9F83A22538117 /* JetMacUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+		27C12D84B56F4862805E52E5 /* JetShare */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 02D6F1AF345E2AA3797D3EB3 /* Build configuration list for PBXNativeTarget "JetShare" */;
+			buildPhases = (
+				40C08C97F29053D2A7BE8591 /* Sources */,
+				CB7937FEB294233C296547D9 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = JetShare;
+			packageProductDependencies = (
+				3710D065C63046187DC03BE0 /* JetCapture */,
+			);
+			productName = JetShare;
+			productReference = 9936BB547F2EDD70F6D3754D /* JetShare.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		942E57C448BFAC03146FA25A /* JetWidgets */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 6A444294075BB9E89A365534 /* Build configuration list for PBXNativeTarget "JetWidgets" */;
+			buildPhases = (
+				6418DD3FB17BF62BB5947FC5 /* Sources */,
+				F99CD99AE60AD690D9C90C11 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = JetWidgets;
+			packageProductDependencies = (
+				1A6B64987CB058D393C73871 /* JetCapture */,
+			);
+			productName = JetWidgets;
+			productReference = C2F8A820F8E50A38C1B6A196 /* JetWidgets.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 		975626F73ADAF5926E25BF5B /* JetMCP */ = {
 			isa = PBXNativeTarget;
@@ -226,14 +378,18 @@
 				4A50AD9230A57E753228B10E /* Sources */,
 				A568D58FFE6D949CF71E6264 /* Resources */,
 				6A16D4101715576906B83D3E /* Frameworks */,
+				A1C49E5D8C5490EAAA11A7C8 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				611102F7A803540994F2CF74 /* PBXTargetDependency */,
+				1E03AAF9C4D1509FCA803BB0 /* PBXTargetDependency */,
 			);
 			name = Jet;
 			packageProductDependencies = (
 				3768ECB5D2F33D08148390F5 /* JetKit */,
+				E0613344A26DBC381AD0BC5C /* JetCapture */,
 			);
 			productName = Jet;
 			productReference = 395D913E8BEE7F52A101A8E3 /* Jet.app */;
@@ -270,6 +426,14 @@
 						ProvisioningStyle = Manual;
 						TestTargetID = CBE3AD1230D0E87C79364C75;
 					};
+					27C12D84B56F4862805E52E5 = {
+						DevelopmentTeam = BJ2UZLM855;
+						ProvisioningStyle = Automatic;
+					};
+					942E57C448BFAC03146FA25A = {
+						DevelopmentTeam = BJ2UZLM855;
+						ProvisioningStyle = Automatic;
+					};
 					975626F73ADAF5926E25BF5B = {
 						DevelopmentTeam = "";
 						ProvisioningStyle = Manual;
@@ -305,6 +469,8 @@
 			projectRoot = "";
 			targets = (
 				E7202417FAA613EC9852A4F7 /* Jet */,
+				27C12D84B56F4862805E52E5 /* JetShare */,
+				942E57C448BFAC03146FA25A /* JetWidgets */,
 				CBE3AD1230D0E87C79364C75 /* JetMac */,
 				975626F73ADAF5926E25BF5B /* JetMCP */,
 				01852E96EE665ADD14FE5A8B /* JetMacUITests */,
@@ -357,10 +523,22 @@
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		40C08C97F29053D2A7BE8591 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				2A4CFC9BDCE323A9E7BB6AA0 /* ShareModel.swift in Sources */,
+				22F114A515FD767836D9BB80 /* ShareView.swift in Sources */,
+				77569DB7FB083AD01D8E4341 /* ShareViewController.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		4A50AD9230A57E753228B10E /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				7452849A5D53EA5A4DCCA667 /* JetIntents.swift in Sources */,
+				8434F00D7BAA8F5AA06FA54B /* JetShortcuts.swift in Sources */,
 				5279384B946761E22CB36D76 /* main.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -370,6 +548,15 @@
 			buildActionMask = 2147483647;
 			files = (
 				CC34BEEFC8A8116060ED2853 /* DragTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		6418DD3FB17BF62BB5947FC5 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B756051661EF0E4E285D9C64 /* JetIntents.swift in Sources */,
+				85977F77DC010F5120194B12 /* JetWidgets.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -400,6 +587,11 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		1E03AAF9C4D1509FCA803BB0 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 942E57C448BFAC03146FA25A /* JetWidgets */;
+			targetProxy = F8C2ECAC910AFAA0BBEDA887 /* PBXContainerItemProxy */;
+		};
 		2A32671AEA95C15F9885519D /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = E7202417FAA613EC9852A4F7 /* Jet */;
@@ -409,6 +601,11 @@
 			isa = PBXTargetDependency;
 			target = 975626F73ADAF5926E25BF5B /* JetMCP */;
 			targetProxy = 74E09FDD41BB42F8B2435048 /* PBXContainerItemProxy */;
+		};
+		611102F7A803540994F2CF74 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 27C12D84B56F4862805E52E5 /* JetShare */;
+			targetProxy = 88ABCA881610CF41F71E2421 /* PBXContainerItemProxy */;
 		};
 		ED9C5A4539845336CEBD57FE /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
@@ -460,10 +657,37 @@
 			};
 			name = Debug;
 		};
+		3DD89DD717CE62A5B10F6E5F /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = Config/Jet.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 12;
+				DEVELOPMENT_TEAM = BJ2UZLM855;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Config/JetWidgets-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Jet Widgets";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.johnzhao.jet.widgets;
+				PRODUCT_NAME = JetWidgets;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 2;
+			};
+			name = Debug;
+		};
 		414DDAD54FCB87100AACBE5B /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Config/Jet.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 12;
@@ -509,6 +733,32 @@
 				TEST_TARGET_NAME = Jet;
 			};
 			name = Debug;
+		};
+		5C0F706EB04F8CAC61CCD32B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = Config/Jet.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 12;
+				DEVELOPMENT_TEAM = BJ2UZLM855;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Config/JetWidgets-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Jet Widgets";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.johnzhao.jet.widgets;
+				PRODUCT_NAME = JetWidgets;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 2;
+			};
+			name = Release;
 		};
 		64773BEDDAC030BA8241D325 /* Debug */ = {
 			isa = XCBuildConfiguration;
@@ -603,6 +853,32 @@
 				TEST_TARGET_NAME = Jet;
 			};
 			name = Release;
+		};
+		8BC15C13F0328C52BCAECA45 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = Config/Jet.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 12;
+				DEVELOPMENT_TEAM = BJ2UZLM855;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Config/JetShare-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = Jet;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.johnzhao.jet.share;
+				PRODUCT_NAME = JetShare;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 2;
+			};
+			name = Debug;
 		};
 		8E104FD86B4C3EA893679506 /* Release */ = {
 			isa = XCBuildConfiguration;
@@ -721,6 +997,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Config/Jet.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 12;
@@ -777,9 +1054,44 @@
 			};
 			name = Release;
 		};
+		FCE1A3DBC2657BCA3E03D166 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = Config/Jet.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 12;
+				DEVELOPMENT_TEAM = BJ2UZLM855;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Config/JetShare-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = Jet;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.johnzhao.jet.share;
+				PRODUCT_NAME = JetShare;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 2;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		02D6F1AF345E2AA3797D3EB3 /* Build configuration list for PBXNativeTarget "JetShare" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				8BC15C13F0328C52BCAECA45 /* Debug */,
+				FCE1A3DBC2657BCA3E03D166 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 		0AEA10598942F15D165BF603 /* Build configuration list for PBXNativeTarget "JetUITests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -816,6 +1128,15 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
 		};
+		6A444294075BB9E89A365534 /* Build configuration list for PBXNativeTarget "JetWidgets" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				3DD89DD717CE62A5B10F6E5F /* Debug */,
+				5C0F706EB04F8CAC61CCD32B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 		87AFD8B478CCDE56606474EF /* Build configuration list for PBXNativeTarget "Jet" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -844,6 +1165,14 @@
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		1A6B64987CB058D393C73871 /* JetCapture */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = JetCapture;
+		};
+		3710D065C63046187DC03BE0 /* JetCapture */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = JetCapture;
+		};
 		3768ECB5D2F33D08148390F5 /* JetKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = JetKit;
@@ -855,6 +1184,10 @@
 		D4DA2710E5E1FB777C296EA8 /* JetKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = JetKit;
+		};
+		E0613344A26DBC381AD0BC5C /* JetCapture */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = JetCapture;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

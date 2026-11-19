@@ -27,6 +27,18 @@
 			</array>
 		</dict>
 	</array>
+	<!-- jet:// links from widgets: jet://capture, jet://daily, jet://new/note, jet://new/ink, jet://open?path=… -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.johnzhao.jet</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>jet</string>
+			</array>
+		</dict>
+	</array>
 	<!-- Rows dragged around inside Jet's sidebar. -->
 	<key>UTExportedTypeDeclarations</key>
 	<array>
