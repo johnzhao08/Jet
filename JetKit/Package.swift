@@ -19,6 +19,7 @@ let package = Package(
             name: "JetKit",
             dependencies: ["JetCapture", .product(name: "libgit2", package: "libgit2")]
         ),
+        .testTarget(name: "JetCaptureTests", dependencies: ["JetKit", "JetCapture"]),
     ],
     swiftLanguageModes: [.v5]
 )
