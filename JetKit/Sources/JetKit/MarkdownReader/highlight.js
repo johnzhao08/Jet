@@ -1198,3 +1198,65 @@ keyword:["anyfunc","block","br","br_if","br_table","call","call_indirect","data"
 className:{1:"keyword",3:"operator"}},{className:"variable",begin:/\$[\w_]+/},{
 match:/(\((?!;)|\))+/,className:"punctuation",relevance:0},{
 begin:[/(?:func|call|call_indirect)/,/\s+/,/\$[^\s)]+/],className:{1:"keyword",
+3:"title.function"}},e.QUOTE_STRING_MODE,{match:/(i32|i64|f32|f64)(?!\.)/,
+className:"type"},{className:"keyword",
+match:/\b(f32|f64|i32|i64)(?:\.(?:abs|add|and|ceil|clz|const|convert_[su]\/i(?:32|64)|copysign|ctz|demote\/f64|div(?:_[su])?|eqz?|extend_[su]\/i32|floor|ge(?:_[su])?|gt(?:_[su])?|le(?:_[su])?|load(?:(?:8|16|32)_[su])?|lt(?:_[su])?|max|min|mul|nearest|neg?|or|popcnt|promote\/f32|reinterpret\/[fi](?:32|64)|rem_[su]|rot[lr]|shl|shr_[su]|store(?:8|16|32)?|sqrt|sub|trunc(?:_[su]\/f(?:32|64))?|wrap\/i64|xor))\b/
+},{className:"number",relevance:0,
+match:/[+-]?\b(?:\d(?:_?\d)*(?:\.\d(?:_?\d)*)?(?:[eE][+-]?\d(?:_?\d)*)?|0x[\da-fA-F](?:_?[\da-fA-F])*(?:\.[\da-fA-F](?:_?[\da-fA-D])*)?(?:[pP][+-]?\d(?:_?\d)*)?)\b|\binf\b|\bnan(?::0x[\da-fA-F](?:_?[\da-fA-D])*)?\b/
+}]}},grmr_xml:e=>{
+const n=e.regex,t=n.concat(/[\p{L}_]/u,n.optional(/[\p{L}0-9_.-]*:/u),/[\p{L}0-9_.-]*/u),a={
+className:"symbol",begin:/&[a-z]+;|&#[0-9]+;|&#x[a-f0-9]+;/},i={begin:/\s/,
+contains:[{className:"keyword",begin:/#?[a-z_][a-z1-9_-]+/,illegal:/\n/}]
+},r=e.inherit(i,{begin:/\(/,end:/\)/}),s=e.inherit(e.APOS_STRING_MODE,{
+className:"string"}),o=e.inherit(e.QUOTE_STRING_MODE,{className:"string"}),c={
+endsWithParent:!0,illegal:/</,relevance:0,contains:[{className:"attr",
+begin:/[\p{L}0-9._:-]+/u,relevance:0},{begin:/=\s*/,relevance:0,contains:[{
+className:"string",endsParent:!0,variants:[{begin:/"/,end:/"/,contains:[a]},{
+begin:/'/,end:/'/,contains:[a]},{begin:/[^\s"'=<>`]+/}]}]}]};return{
+name:"HTML, XML",
+aliases:["html","xhtml","rss","atom","xjb","xsd","xsl","plist","wsf","svg"],
+case_insensitive:!0,unicodeRegex:!0,contains:[{className:"meta",begin:/<![a-z]/,
+end:/>/,relevance:10,contains:[i,o,s,r,{begin:/\[/,end:/\]/,contains:[{
+className:"meta",begin:/<![a-z]/,end:/>/,contains:[i,r,o,s]}]}]
+},e.COMMENT(/<!--/,/-->/,{relevance:10}),{begin:/<!\[CDATA\[/,end:/\]\]>/,
+relevance:10},a,{className:"meta",end:/\?>/,variants:[{begin:/<\?xml/,
+relevance:10,contains:[o]},{begin:/<\?[a-z][a-z0-9]+/}]},{className:"tag",
+begin:/<style(?=\s|>)/,end:/>/,keywords:{name:"style"},contains:[c],starts:{
+end:/<\/style>/,returnEnd:!0,subLanguage:"css"}},{className:"tag",
+begin:/<script(?=\s|>)/,end:/>/,keywords:{name:"script"},contains:[c],starts:{
+end:/<\/script>/,returnEnd:!0,subLanguage:"javascript"}},{className:"tag",
+begin:/<>|<\/>/},{className:"tag",
+begin:n.concat(/</,n.lookahead(n.concat(t,n.either(/\/>/,/>/,/\s/)))),
+end:/\/?>/,contains:[{className:"name",begin:t,relevance:0,starts:c}]},{
+className:"tag",begin:n.concat(/<\//,n.lookahead(n.concat(t,/>/))),contains:[{
+className:"name",begin:t,relevance:0},{begin:/>/,relevance:0,endsParent:!0}]}]}
+},grmr_yaml:e=>{
+const n="true false yes no null",t="[\\w#;/?:@&=+$,.~*'()[\\]]+",a={
+className:"string",relevance:0,variants:[{begin:/"/,end:/"/},{begin:/\S+/}],
+contains:[e.BACKSLASH_ESCAPE,{className:"template-variable",variants:[{
+begin:/\{\{/,end:/\}\}/},{begin:/%\{/,end:/\}/}]}]},i=e.inherit(a,{variants:[{
+begin:/'/,end:/'/,contains:[{begin:/''/,relevance:0}]},{begin:/"/,end:/"/},{
+begin:/[^\s,{}[\]]+/}]}),r={end:",",endsWithParent:!0,excludeEnd:!0,keywords:n,
+relevance:0},s={begin:/\{/,end:/\}/,contains:[r],illegal:"\\n",relevance:0},o={
+begin:"\\[",end:"\\]",contains:[r],illegal:"\\n",relevance:0},c=[{
+className:"attr",variants:[{begin:/[\w*@][\w*@ :()\./-]*:(?=[ \t]|$)/},{
+begin:/"[\w*@][\w*@ :()\./-]*":(?=[ \t]|$)/},{
+begin:/'[\w*@][\w*@ :()\./-]*':(?=[ \t]|$)/}]},{className:"meta",
+begin:"^---\\s*$",relevance:10},{className:"string",
+begin:"[\\|>]([1-9]?[+-])?[ ]*\\n( +)[^ ][^\\n]*\\n(\\2[^\\n]+\\n?)*"},{
+begin:"<%[%=-]?",end:"[%-]?%>",subLanguage:"ruby",excludeBegin:!0,excludeEnd:!0,
+relevance:0},{className:"type",begin:"!\\w+!"+t},{className:"type",
+begin:"!<"+t+">"},{className:"type",begin:"!"+t},{className:"type",begin:"!!"+t
+},{className:"meta",begin:"&"+e.UNDERSCORE_IDENT_RE+"$"},{className:"meta",
+begin:"\\*"+e.UNDERSCORE_IDENT_RE+"$"},{className:"bullet",begin:"-(?=[ ]|$)",
+relevance:0},e.HASH_COMMENT_MODE,{beginKeywords:n,keywords:{literal:n}},{
+className:"number",
+begin:"\\b[0-9]{4}(-[0-9][0-9]){0,2}([Tt \\t][0-9][0-9]?(:[0-9][0-9]){2})?(\\.[0-9]*)?([ \\t])*(Z|[-+][0-9][0-9]?(:[0-9][0-9])?)?\\b"
+},{className:"number",begin:e.C_NUMBER_RE+"\\b",relevance:0},s,o,{
+className:"string",relevance:0,begin:/'/,end:/'/,contains:[{match:/''/,
+scope:"char.escape",relevance:0}]},a],l=[...c]
+;return l.pop(),l.push(i),r.contains=l,{name:"YAML",case_insensitive:!0,
+aliases:["yml"],contains:c}}});const Ke=ne;for(const e of Object.keys(Pe)){
+const n=e.replace("grmr_","").replace("_","-");Ke.registerLanguage(n,Pe[e])}
+return Ke}()
+;"object"==typeof exports&&"undefined"!=typeof module&&(module.exports=hljs);
