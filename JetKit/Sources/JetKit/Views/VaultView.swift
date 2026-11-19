@@ -11,6 +11,10 @@ struct VaultView: View {
 
     @State private var showSyncSettings = false
     @State private var showQuickOpen = false
+    @State private var showBrokenLinks = false
+    @State private var nextCommand: VaultCommand?
+    @State private var showTemplates = false
+    @State private var showLibrary = false
     @State private var showGraph = false
     @State private var newNoteName = ""
     @State private var showConnectAI = false
@@ -22,7 +26,7 @@ struct VaultView: View {
     var body: some View {
         NavigationSplitView(columnVisibility: $columns) {
             SidebarView(session: session, showSyncSettings: $showSyncSettings,
-                        showQuickOpen: $showQuickOpen, showGraph: $showGraph, showConnectAI: $showConnectAI)
+                        showLibrary: $showLibrary, showQuickOpen: $showQuickOpen, showGraph: $showGraph, showConnectAI: $showConnectAI)
                 .navigationSplitViewColumnWidth(min: 220, ideal: 270, max: 400)
         } detail: {
             if let path = session.selection, !session.isDirectory(path) {
@@ -77,6 +81,22 @@ struct VaultView: View {
         }
         .sheet(isPresented: $showSyncSettings) { SyncSettingsView(session: session) }
         .sheet(isPresented: $showQuickOpen) { QuickOpenView(session: session) }
+        .sheet(isPresented: $session.showCommandPalette, onDismiss: {
+            guard let command = nextCommand else { return }
+            nextCommand = nil
+            run(command)
+        }) {
+            VaultCommandPalette(session: session) { command in
+                nextCommand = command
+                session.showCommandPalette = false
+            }
+        }
+        .sheet(isPresented: $showTemplates) { TemplatePicker(session: session) }
+        .sheet(isPresented: $showLibrary) { VaultLibraryView(session: session) }
+        .sheet(isPresented: $showBrokenLinks) { BrokenLinksView(session: session) }
+        .alert("Couldn’t complete file operation", isPresented: Binding(
+            get: { session.fileOperationError != nil }, set: { if !$0 { session.fileOperationError = nil } }
+        )) { Button("OK") {} } message: { Text(session.fileOperationError ?? "") }
         .sheet(isPresented: $showGraph) { GraphView(session: session) }
         .alert(
             session.pendingNewNote?.kind == .ink ? "New handwritten note" : "New text note",
@@ -113,6 +133,27 @@ struct VaultView: View {
         }
     }
 
+    private func run(_ command: VaultCommand) {
+        switch command {
+        case .quickOpen: showQuickOpen = true
+        case .back: session.navigate(back: true)
+        case .forward: session.navigate(back: false)
+        case .markdown: session.requestNewNote(kind: .markdown)
+        case .ink: session.requestNewNote(kind: .ink)
+        case .template: showTemplates = true
+        case .daily: session.openDailyNote()
+        case .weekly: session.openPeriodicNote(.weekly)
+        case .monthly: session.openPeriodicNote(.monthly)
+        case .brokenLinks:
+            session.flushEditors()
+            session.rebuildIndex()
+            showBrokenLinks = true
+        case .graph: showGraph = true
+        case .library: showLibrary = true
+        case .sync: showSyncSettings = true
+        }
+    }
+
     /// Leaving the app: save, then push what we can in the time iPadOS gives us.
     private func syncInBackground() {
         session.flushEditors()
@@ -137,6 +178,7 @@ private struct SidebarView: View {
     @Environment(AppModel.self) private var app
     @Bindable var session: VaultSession
     @Binding var showSyncSettings: Bool
+    @Binding var showLibrary: Bool
     @Binding var showQuickOpen: Bool
     @Binding var showGraph: Bool
     @Binding var showConnectAI: Bool
@@ -478,6 +520,26 @@ private struct SidebarView: View {
                 }
                 .keyboardShortcut("o", modifiers: .command)
 
+                Menu {
+                    Button("Command palette…") { session.showCommandPalette = true }
+                        #if os(iOS)
+                        .keyboardShortcut("k", modifiers: .command)
+                        #endif
+                    Button("Vault library…") { showLibrary = true }
+                    Divider()
+                    Button("Back") { session.navigate(back: true) }
+                        #if os(iOS)
+                        .keyboardShortcut("[", modifiers: .command)
+                        #endif
+                        .disabled(session.backPaths.isEmpty)
+                    Button("Forward") { session.navigate(back: false) }
+                        #if os(iOS)
+                        .keyboardShortcut("]", modifiers: .command)
+                        #endif
+                        .disabled(session.forwardPaths.isEmpty)
+                } label: {
+                    Label("Navigate", systemImage: "command")
+                }
                 Button { session.openDailyNote() } label: {
                     Label("Today's note", systemImage: "calendar")
                 }

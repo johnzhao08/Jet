@@ -71,6 +71,15 @@ final class DragTests: XCTestCase {
     }
 
     #if os(macOS)
+    func testCommandPaletteOpensWeeklyNote() {
+        app.typeKey("k", modifierFlags: .command)
+        let command = app.textFields["command-search"]
+        XCTAssertTrue(command.waitForExistence(timeout: 5), app.debugDescription)
+        command.typeText("week")
+        command.typeKey(.return, modifierFlags: [])
+        XCTAssertTrue(row("Weekly").waitForExistence(timeout: 5), app.debugDescription)
+    }
+
     private func drag(_ path: String, toRow target: String, at fraction: CGFloat) {
         let source = row(path), destination = row(target)
         XCTAssertTrue(source.waitForExistence(timeout: 5) && destination.waitForExistence(timeout: 5))

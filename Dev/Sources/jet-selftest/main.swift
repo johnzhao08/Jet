@@ -583,6 +583,36 @@ do {
     print("  FAIL  threw: \(error.localizedDescription)")
 }
 
+print("Navigation, reusable templates and periodic notes")
+do {
+    let vault = work.appendingPathComponent("journal")
+    try fm.createDirectory(at: vault.appendingPathComponent("Templates"), withIntermediateDirectories: true)
+    try Data("{{title}} on {{date}}".utf8).write(to: vault.appendingPathComponent("Templates/Weekly.md"))
+    try MainActor.assumeIsolated {
+        let session = VaultSession(ref: VaultRef(name: "journal", location: vault.path))
+        let date = Calendar(identifier: .gregorian).date(from: DateComponents(year: 2021, month: 1, day: 1))!
+        session.openPeriodicNote(.weekly, for: date)
+        let week = "Weekly/2020-W53.md"
+        let content = try String(contentsOf: session.url(for: week), encoding: .utf8)
+        expect(session.selection == week && content == "2020-W53 on 2021-01-01", "weekly template uses ISO week year")
+        try Data("edited".utf8).write(to: session.url(for: week))
+        session.openPeriodicNote(.weekly, for: date)
+        let preserved = try String(contentsOf: session.url(for: week), encoding: .utf8)
+        expect(preserved == "edited", "reopening a period preserves its contents")
+        session.openPeriodicNote(.monthly, for: date)
+        expect(session.selection == "Monthly/2021-01.md", "monthly note follows calendar month")
+        session.navigate(back: true)
+        expect(session.selection == week, "navigate back to previous note")
+        session.navigate(back: false)
+        expect(session.selection == "Monthly/2021-01.md", "navigate forward")
+        expect(session.createFromTemplate("Templates/Weekly.md", named: "Minutes"), "use a template in the working folder")
+        expect(session.recentNotes.first == "Monthly/Minutes.md" && session.forwardPaths.isEmpty, "recent notes follow navigation")
+    }
+} catch {
+    failures += 1
+    print("  FAIL  threw: \(error.localizedDescription)")
+}
+
 print("15. Moving files between folders")
 do {
     let vault = work.appendingPathComponent("moves")
@@ -887,6 +917,66 @@ do {
         expect(session.sortMode == .manual && top() == ["Course", "Bee.md", "c.ink", "New.md"]
                && session.children(of: "Course").map(\.fileName) == ["a.md", "x.md"], "Clean Up By Name tidies every folder")
     }
+} catch {
+    failures += 1
+    print("  FAIL  threw: \(error.localizedDescription)")
+}
+
+do {
+    print("Note history, deleted-note recovery and typed properties")
+    let vault = work.appendingPathComponent("history")
+    try fm.createDirectory(at: vault, withIntermediateDirectories: true)
+    let repo = try GitRepository.create(at: vault.path)
+    let file = vault.appendingPathComponent("History.md")
+    try "before\n".write(to: file, atomically: true, encoding: .utf8)
+    try repo.commitAll(message: "First", author: author)
+    try "after\n".write(to: file, atomically: true, encoding: .utf8)
+    try repo.commitAll(message: "Second", author: author)
+    let versions = try repo.noteHistory(path: "History.md")
+    expect(versions.map(\.summary) == ["Second", "First"], "history lists a note's changed versions")
+    if let newest = versions.first, let oldest = versions.last {
+        let patch = try repo.noteDiff(path: newest.path, from: oldest.commit, to: newest.commit)
+        expect(patch.contains("-before") && patch.contains("+after"), "diff shows the changed lines")
+    }
+    try fm.removeItem(at: file)
+    try repo.commitAll(message: "Delete", author: author)
+    let deleted = try repo.noteHistory()
+    expect(deleted.map(\.path) == ["History.md"], "deleted-note list keeps the most recent restorable version")
+    if let version = deleted.first {
+        try repo.noteVersion(path: version.path, commit: version.commit).write(to: file, options: .withoutOverwriting)
+        expect(read(file) == "after\n", "restore recovers the latest note bytes")
+    }
+    let tools = VaultTools(root: vault)
+    let edit = tools.call("set_properties", ["path": "History.md", "properties": [
+        ["key": "labels", "type": "list", "value": ["a,b", "quotes\""]],
+        ["key": "complete", "type": "checkbox", "value": true],
+        ["key": "score", "type": "number", "value": 5],
+        ["key": "due", "type": "date", "value": "2028-02-29"]]])
+    let updated = read(file)
+    expect(!edit.isError && updated.hasSuffix("after\n"), "editing properties preserves the body")
+    let fields = NoteSyntax.frontmatter(in: updated).properties
+    expect(fields.first { $0.key == "labels" }?.values == ["a,b", "quotes\""], "quoted list entries round-trip")
+    let badEdit = tools.call("set_properties", ["path": "History.md", "properties": [
+        ["key": "score", "type": "number", "value": 10],
+        ["key": "due", "type": "date", "value": "2028-02-30"]]])
+    expect(badEdit.isError && read(file) == updated, "invalid property batches leave every value alone")
+    let refs = vault.appendingPathComponent("Refs.md")
+    try "[[History]] [[Missing]]".write(to: refs, atomically: true, encoding: .utf8)
+    let broken = tools.call("check_links", ["path": "Refs.md"])
+    expect((broken.content.first?["text"] as? String)?.contains("Refs.md: [[Missing]]") == true,
+           "MCP reports the source of an unresolved link")
+    let moved = tools.call("move_note", ["path": "History.md", "destination": "Ledger.md"])
+    expect(!moved.isError && read(refs) == "[[Ledger]] [[Missing]]", "MCP moves notes through the shared link updater")
+    let historic = tools.call("note_history", ["path": "History.md"])
+    expect((historic.content.first?["text"] as? String)?.contains(versions.first?.commit ?? "?") == true,
+           "MCP can read the old path's committed history after a move")
+    let mixed = "---\r\nfirst: keep\r\n---\r\nunchanged\nbody\r\n"
+    try mixed.write(to: refs, atomically: true, encoding: .utf8)
+    let edited = tools.call("set_properties", ["path": "Refs.md", "properties": [
+        ["key": "first", "type": "text", "value": "new"]]])
+    expect(!edited.isError && read(refs) == mixed.replacingOccurrences(of: "first: keep", with: "first: \"new\""),
+           "property edits preserve unrelated bytes and mixed line endings")
+
 } catch {
     failures += 1
     print("  FAIL  threw: \(error.localizedDescription)")

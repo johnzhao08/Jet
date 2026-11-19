@@ -16,6 +16,19 @@ public struct JetApp: App {
         }
         #if os(macOS)
         .defaultSize(width: 1180, height: 760)
+        .commands {
+            CommandMenu("Navigate") {
+                Button("Command palette…") { model.session?.showCommandPalette = true }
+                    .keyboardShortcut("k", modifiers: .command)
+                    .disabled(model.session == nil)
+                Button("Back") { model.session?.navigate(back: true) }
+                    .keyboardShortcut("[", modifiers: .command)
+                    .disabled(model.session?.backPaths.isEmpty != false)
+                Button("Forward") { model.session?.navigate(back: false) }
+                    .keyboardShortcut("]", modifiers: .command)
+                    .disabled(model.session?.forwardPaths.isEmpty != false)
+            }
+        }
         #endif
     }
 }
