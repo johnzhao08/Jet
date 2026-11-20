@@ -47,7 +47,7 @@ mkdir -p build.noindex
 # Provision the shared App Group for the app, share extension and widgets when archiving.
 xcodebuild -project Jet.xcodeproj -scheme Jet -configuration Release \
     -destination 'generic/platform=iOS' -derivedDataPath build.noindex/DerivedData \
-    -archivePath build.noindex/Jet.xcarchive -allowProvisioningUpdates archive > build.noindex/archive.log 2>&1 \
+    -archivePath build.noindex/Jet.xcarchive -allowProvisioningUpdates CODE_SIGN_IDENTITY= archive > build.noindex/archive.log 2>&1 \
     || { tail -20 build.noindex/archive.log; echo "Archive failed; full log in build.noindex/archive.log" >&2; git checkout project.yml Jet.xcodeproj; exit 1; }
 
 cat > build.noindex/ExportOptions.plist <<EOF
