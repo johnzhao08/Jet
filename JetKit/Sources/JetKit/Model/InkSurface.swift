@@ -16,6 +16,8 @@ typealias InkPlatformColor = UIColor
 /// What the pointer does on the page when it is pressed and dragged.
 public enum InkSurfaceTool: String, CaseIterable, Identifiable, Sendable {
     case pen, highlighter, eraser
+    /// Add Text: click the page to type there, click typed text to edit it, drag it to move it.
+    case text
 
     public var id: String { rawValue }
 
@@ -24,6 +26,7 @@ public enum InkSurfaceTool: String, CaseIterable, Identifiable, Sendable {
         case .pen: "Pen"
         case .highlighter: "Highlighter"
         case .eraser: "Eraser"
+        case .text: "Add Text"
         }
     }
 
@@ -32,6 +35,7 @@ public enum InkSurfaceTool: String, CaseIterable, Identifiable, Sendable {
         case .pen: "pencil.tip"
         case .highlighter: "highlighter"
         case .eraser: "eraser"
+        case .text: "character.textbox"
         }
     }
 
@@ -40,11 +44,12 @@ public enum InkSurfaceTool: String, CaseIterable, Identifiable, Sendable {
         case .pen: "Write with ink that follows pen pressure"
         case .highlighter: "See-through marker for highlighting"
         case .eraser: "Wipe across a stroke to remove it"
+        case .text: "Click the page to type there; click typed text to edit it, or drag it to move it"
         }
     }
 
     /// Whether the tool puts ink on the page (so a colour and thickness apply).
-    public var inks: Bool { self != .eraser }
+    public var inks: Bool { self == .pen || self == .highlighter }
 }
 
 /// A named ink colour, kept as plain numbers so the choice means the same on every platform.
@@ -72,7 +77,7 @@ public enum InkSwatch: String, CaseIterable, Identifiable, Sendable {
         switch tool {
         case .pen: [.black, .blue, .red, .green, .orange, .purple]
         case .highlighter: [.yellow, .green, .pink, .blue, .orange]
-        case .eraser: []
+        case .eraser, .text: []
         }
     }
 
