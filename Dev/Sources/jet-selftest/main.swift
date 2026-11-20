@@ -468,6 +468,8 @@ do {
     print("  FAIL  threw: \(error.localizedDescription)")
 }
 
+checkInkText(work: work)
+
 print("13. PDFs and other files")
 do {
     // A two-page PDF with text; the second page is landscape and rotated 90°, so it shows portrait.
