@@ -321,4 +321,335 @@ func checkInkText(work: URL) {
         failures += 1
         print("  FAIL  threw: \(error.localizedDescription)")
     }
+
+    print("12d3. Moving text right, and tapping the unused part of a line")
+    do {
+        let url = work.appendingPathComponent("Moving.ink")
+        try textDoc([baseStroke]).write(to: url)
+        MainActor.assumeIsolated {
+            let model = InkNoteModel(url: url)
+            guard let added = model.addText("Hi", at: CGPoint(x: 40, y: 192), id: "short") else {
+                failures += 1
+                print("  FAIL  text wasn't added")
+                return
+            }
+            let startWidth = added.width
+
+            // Text starts out wrapping at the page's right margin, so it must be able to move right
+            // by giving up wrap width instead of being stuck against that margin.
+            model.moveText("short", to: CGPoint(x: 400, y: 192))
+            var moved = model.texts.first
+            expect(moved?.origin == CGPoint(x: 400, y: 192), "text can be moved well to the right (at \(moved?.origin ?? .zero))")
+            expect(moved.map { $0.x + $0.width <= InkDocument.pageWidth && $0.width >= InkText.minimumWidth && $0.width < startWidth } == true,
+                   "…and wraps inside the page afterwards (width \(moved?.width ?? 0))")
+            model.moveText("short", to: CGPoint(x: 5000, y: 192))
+            moved = model.texts.first
+            expect(moved.map { $0.x + $0.width <= InkDocument.pageWidth && $0.width >= InkText.minimumWidth && $0.x > 400 } == true,
+                   "moving it far off the right keeps it on the page at least its minimum width (\(moved?.origin ?? .zero), \(moved?.width ?? 0))")
+            model.moveText("short", to: CGPoint(x: 400, y: 192))
+            model.saveNow()
+            expect(texts(at: url).first.map { $0.origin == CGPoint(x: 400, y: 192) && $0.text == "Hi" } == true,
+                   "a text moved right is saved there, with its words")
+            expect(InkNoteModel(url: url).texts.first?.origin == CGPoint(x: 400, y: 192), "…and reopens there")
+
+            // A long text moved right wraps onto more lines but keeps every word.
+            let sentence = String(repeating: "wrapping words ", count: 12).trimmingCharacters(in: .whitespaces)
+            let long = model.addText(sentence, at: CGPoint(x: 40, y: 480), id: "long")
+            let linesBefore = long.map { $0.frame.height / InkText.lineHeight } ?? 0
+            model.moveText("long", to: CGPoint(x: 600, y: 480))
+            let longMoved = model.texts.first { $0.id == "long" }
+            expect(longMoved?.text == sentence && longMoved?.origin.x == 600
+                   && (longMoved.map { $0.frame.height / InkText.lineHeight } ?? 0) >= linesBefore
+                   && (longMoved.map { $0.frame.maxX <= InkDocument.pageWidth } == true),
+                   "long text moved right keeps its words and stays on the page")
+            model.removeText("long")
+
+            // Hit-testing: only where the text actually is, not the empty rest of its wrap width.
+            guard let text = model.texts.first(where: { $0.id == "short" }) else { return }
+            let top = text.y
+            expect(model.text(at: CGPoint(x: text.x + 4, y: top + InkText.lineHeight / 2))?.id == "short",
+                   "a tap on the words finds the text")
+            expect(model.text(at: CGPoint(x: text.x + text.width - 20, y: top + InkText.lineHeight / 2)) == nil,
+                   "a tap on the empty end of a short line doesn't")
+            expect(model.text(at: CGPoint(x: text.x + 4, y: top + InkText.lineHeight + 8)) == nil,
+                   "a tap just below the last line doesn't")
+            expect(model.text(at: CGPoint(x: text.x - 40, y: top + InkText.lineHeight / 2)) == nil,
+                   "a tap left of the text doesn't")
+
+            // A short second line leaves the rest of that line free, though the first line is long.
+            model.removeText("short")
+            model.addText("A first line that runs a good way across\nok", at: CGPoint(x: 40, y: 640), id: "two")
+            guard let two = model.texts.first(where: { $0.id == "two" }) else { return }
+            expect(model.text(at: CGPoint(x: two.x + 200, y: two.y + InkText.lineHeight / 2))?.id == "two",
+                   "a tap on the long first line finds the text")
+            expect(model.text(at: CGPoint(x: two.x + 200, y: two.y + InkText.lineHeight * 1.5)) == nil,
+                   "a tap past the end of the short second line doesn't")
+            expect(model.text(at: CGPoint(x: two.x + 6, y: two.y + InkText.lineHeight * 1.5))?.id == "two",
+                   "a tap on the short second line's words does")
+
+            // Overlapping frames: the tap goes to the text whose words are there.
+            model.removeText("two")
+            model.addText("A long line of words that goes across the page", at: CGPoint(x: 100, y: 800), id: "wide")
+            model.addText("Hi", at: CGPoint(x: 100, y: 800), id: "tiny")
+            expect(model.text(at: CGPoint(x: 100 + 220, y: 800 + InkText.lineHeight / 2))?.id == "wide",
+                   "a tap on one text's words isn't taken by another text's empty space on top of it")
+            expect(model.text(at: CGPoint(x: 100 + 4, y: 800 + InkText.lineHeight / 2))?.id == "tiny",
+                   "…and where both have words, the one on top wins")
+        }
+    } catch {
+        failures += 1
+        print("  FAIL  threw: \(error.localizedDescription)")
+    }
+
+    print("12d4. Undo doesn't reach back across a sync that replaced the note")
+    do {
+        let url = work.appendingPathComponent("UndoSync.ink")
+        let kept = InkText(id: "kept", text: "Mine", origin: CGPoint(x: 40, y: 64), width: 600)
+        try textDoc([baseStroke], texts: [kept]).write(to: url)
+        MainActor.assumeIsolated {
+            let model = InkNoteModel(url: url)
+            let view = InkSurfaceView(model: model)
+            // Wired as InkSurface.makeNSView does.
+            model.undo = { [weak view] in view?.undoLast() }
+            model.redo = { [weak view] in view?.redoLast() }
+            model.textsEdited = { [weak view, weak model] before, name in
+                guard let view, let model else { return }
+                view.recordTexts(from: before, to: model.texts, name: name)
+            }
+            @MainActor func configure() {
+                view.configure(scale: 1, origin: .zero, tool: .pen, swatch: .black, thickness: .medium,
+                               dark: false, generation: model.generation)
+            }
+            configure()
+
+            model.addText("Typed before the sync", at: CGPoint(x: 100, y: 300), id: "before")
+            expect(model.canUndo, "typing text can be undone")
+            view.undoLast()
+            expect(model.texts.map(\.id) == ["kept"], "undo takes the typed text back off")
+            view.redoLast()
+            expect(model.texts.map(\.id) == ["kept", "before"], "…and redo puts it back")
+
+            // Another device's text arrives while this one has undo history.
+            model.saveNow()
+            let other = InkText(id: "from-ipad", text: "Typed elsewhere", origin: CGPoint(x: 40, y: 800), width: 400)
+            var arrived = decoded(try? Data(contentsOf: url)) ?? InkDocument()
+            arrived.texts = (arrived.texts ?? []) + [other]
+            try? arrived.encoded().write(to: url)
+            model.reloadIfChangedOnDisk()
+            configure()
+            expect(model.texts.contains(other), "text from the other device arrived")
+            expect(!model.canUndo, "undo history ends when the note is replaced from disk")
+            view.undoLast()
+            expect(model.texts.map(\.id) == ["kept", "before", "from-ipad"],
+                   "undo after a sync neither drops the arrived text nor rolls the page back (\(model.texts.map(\.id)))")
+
+            // Edits after the sync undo normally, and only themselves.
+            model.removeText("from-ipad")
+            expect(model.canUndo && !model.texts.contains(where: { $0.id == "from-ipad" }), "deleting text after the sync can be undone")
+            view.undoLast()
+            expect(model.texts.map(\.id) == ["kept", "before", "from-ipad"], "…and undo brings back just that text")
+        }
+    } catch {
+        failures += 1
+        print("  FAIL  threw: \(error.localizedDescription)")
+    }
+
+    print("12d5. Existing text opened in the editor but not typed in yields to a sync that changed or deleted it")
+    do {
+        let original = InkText(id: "kept", text: "Original wording", origin: CGPoint(x: 40, y: 64), width: 600)
+        let bystander = InkText(id: "by", text: "Bystander", origin: CGPoint(x: 40, y: 160), width: 600)
+        var reworded = original
+        reworded.text = "Reworded on the iPad"
+        let remotes: [(name: String, texts: [InkText])] = [("reworded", [reworded, bystander]), ("deleted", [bystander])]
+        // What happens after the sync lands, before the note is saved: the canvas may or may not have
+        // been reconfigured (which is what notices a reload) by the time the editor closes or a flush happens.
+        let orders = ["configure, close, save", "flush, close, save", "close, save"]
+        for (r, remote) in remotes.enumerated() {
+            for (o, order) in orders.enumerated() {
+                let url = work.appendingPathComponent("Untouched-\(r)-\(o).ink")
+                try textDoc([baseStroke], texts: [original, bystander]).write(to: url)
+                MainActor.assumeIsolated {
+                    let label = "\(remote.name) remotely, then \(order)"
+                    let model = InkNoteModel(url: url)
+                    let view = InkSurfaceView(model: model)
+                    model.undo = { [weak view] in view?.undoLast() }
+                    model.redo = { [weak view] in view?.redoLast() }
+                    model.textsEdited = { [weak view, weak model] before, name in
+                        guard let view, let model else { return }
+                        view.recordTexts(from: before, to: model.texts, name: name)
+                    }
+                    @MainActor func configure() {
+                        view.configure(scale: 1, origin: .zero, tool: .text, swatch: .black, thickness: .medium,
+                                       dark: false, generation: model.generation)
+                    }
+                    configure()
+
+                    // The writer opens the text to edit it, and types nothing.
+                    view.beginTextEditing(model.texts.first { $0.id == "kept" }, at: .zero)
+                    model.saveNow()
+                    expect(texts(at: url) == [original, bystander], "opening text for editing changes nothing on disk (\(label))")
+
+                    // A sync brings the other device's version of the note, then the writer closes the editor.
+                    try? textDoc([baseStroke], texts: remote.texts).write(to: url)
+                    model.reloadIfChangedOnDisk()
+                    switch o {
+                    case 0: configure(); view.endTextEditing()
+                    case 1: model.saveNow(); view.endTextEditing()
+                    default: view.endTextEditing()
+                    }
+                    model.saveNow()
+
+                    let saved = texts(at: url)
+                    expect(saved == remote.texts, "the other device's change is what stays saved (\(label): \(saved.map(\.text)))")
+                    expect(!saved.contains { $0.id == "kept" && $0.text == original.text },
+                           "the untouched old wording isn't put back (\(label))")
+                    expect(decoded(try? Data(contentsOf: url))?.pkDrawing.strokes.count == 1, "…and the ink is untouched (\(label))")
+                    expect(view.undoManager?.canUndo == false && !model.canUndo,
+                           "closing an editor nothing was typed in leaves nothing to undo (\(label))")
+                    expect(model.editingTextID == nil && model.textDraft == nil, "…and no draft is left behind (\(label))")
+                }
+            }
+        }
+    } catch {
+        failures += 1
+        print("  FAIL  threw: \(error.localizedDescription)")
+    }
+
+    print("12d6. A new text still being typed survives an unrelated sync of the note")
+    do {
+        let url = work.appendingPathComponent("NewDraft.ink")
+        let kept = InkText(id: "kept", text: "Already here", origin: CGPoint(x: 40, y: 64), width: 600)
+        try textDoc([baseStroke], texts: [kept]).write(to: url)
+        MainActor.assumeIsolated {
+            let model = InkNoteModel(url: url)
+            let view = InkSurfaceView(model: model)
+            model.undo = { [weak view] in view?.undoLast() }
+            model.redo = { [weak view] in view?.redoLast() }
+            model.textsEdited = { [weak view, weak model] before, name in
+                guard let view, let model else { return }
+                view.recordTexts(from: before, to: model.texts, name: name)
+            }
+            @MainActor func configure() {
+                view.configure(scale: 1, origin: .zero, tool: .text, swatch: .black, thickness: .medium,
+                               dark: false, generation: model.generation)
+            }
+            configure()
+
+            // A new, still blank text box is open.
+            view.beginTextEditing(nil, at: CGPoint(x: 100, y: 300))
+            let draftID = model.editingTextID
+            model.saveNow()
+            expect(draftID != nil && texts(at: url) == [kept], "a blank new text isn't saved")
+
+            // The other device only adds ink (and a line of its own); this note had no other changes.
+            let theirs = InkText(id: "from-ipad", text: "Typed elsewhere", origin: CGPoint(x: 40, y: 800), width: 400)
+            try? textDoc([baseStroke, stroke(y: 400, at: t0.addingTimeInterval(9))], texts: [kept, theirs]).write(to: url)
+            model.reloadIfChangedOnDisk()
+            configure()
+            expect(model.texts.contains(theirs) && model.drawing.strokes.count == 2, "the other device's changes arrive while the editor is open")
+            expect(model.editingTextID == draftID, "…and the editor is still open on the new text")
+
+            // Typing carries on in the same editor.
+            if let editor = view.subviews.compactMap({ $0 as? NSTextView }).first {
+                editor.string = "Typed after the sync"
+                view.textDidChange(Notification(name: NSText.didChangeNotification, object: editor))
+            } else {
+                failures += 1
+                print("  FAIL  the editor disappeared when the note reloaded")
+            }
+            view.endTextEditing()
+            model.saveNow()
+
+            let saved = texts(at: url)
+            expect(saved.map(\.text) == ["Already here", "Typed elsewhere", "Typed after the sync"],
+                   "the new text, the other device's text and the old text are all saved (\(saved.map(\.text)))")
+            expect(saved.filter { $0.id == draftID }.count == 1, "…the new text once")
+            expect(decoded(try? Data(contentsOf: url))?.pkDrawing.strokes.count == 2, "…with the other device's ink")
+            expect(view.undoManager?.canUndo == true, "adding the new text can be undone")
+            view.undoLast()
+            expect(model.texts.map(\.text) == ["Already here", "Typed elsewhere"],
+                   "undo takes back just the new text (\(model.texts.map(\.text)))")
+        }
+    } catch {
+        failures += 1
+        print("  FAIL  threw: \(error.localizedDescription)")
+    }
+
+    print("12e. The AI helper sees typed text")
+    do {
+        let vault = work.appendingPathComponent("typed-vault")
+        try fm.createDirectory(at: vault, withIntermediateDirectories: true)
+        let note = InkText(id: "t1", text: "Only typed words", origin: CGPoint(x: 40, y: 64), width: 600)
+        try textDoc(texts: [note]).write(to: vault.appendingPathComponent("Typed only.ink"))
+        let reply = MCPServer(vault: vault).handle(["jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                                                     "params": ["name": "read_note", "arguments": ["path": "Typed only"]]])
+        let content = ((reply?["result"] as? [String: Any])?["content"] as? [[String: Any]]) ?? []
+        expect(content.contains { $0["type"] as? String == "image" }, "read_note renders a page that only has typed text")
+        expect(!content.contains { ($0["text"] as? String)?.contains("is empty") == true }, "…and doesn't call it empty")
+    } catch {
+        failures += 1
+        print("  FAIL  threw: \(error.localizedDescription)")
+    }
+
+    print("12f. Text on a note, synced between two devices through git")
+    do {
+        let remote = work.appendingPathComponent("inktext-remote.git")
+        let ipad = work.appendingPathComponent("inktext-ipad")
+        let mac = work.appendingPathComponent("inktext-mac")
+        let author = GitAuthor(name: "Self Test", email: "selftest@jet.local")
+        func sync(_ dir: URL, _ device: String) throws -> SyncReport {
+            try SyncEngine.sync(vaultPath: dir.path, credentials: nil, author: author, deviceName: device)
+        }
+        shell("init", "--bare", "--initial-branch=main", remote.path)
+        try fm.createDirectory(at: ipad, withIntermediateDirectories: true)
+        let repo = try GitRepository.create(at: ipad.path)
+        try repo.setRemoteURL(remote.path)
+
+        let milk = InkText(id: "t1", text: "Buy milk", origin: CGPoint(x: 40, y: 64), width: 500)
+        let sam = InkText(id: "t2", text: "Call Sam", origin: CGPoint(x: 40, y: 160), width: 500)
+        let chapter = InkText(id: "t3", text: "Read chapter 3", origin: CGPoint(x: 40, y: 224), width: 500)
+        var oat = milk
+        oat.text = "Buy oat milk"
+        let oldDrawing = PKDrawing(strokes: [baseStroke]).dataRepresentation().base64EncodedString()
+        try Data(#"{"drawing":"\#(oldDrawing)","paper":"lined","version":1}"#.utf8).write(to: ipad.appendingPathComponent("Old.ink"))
+        try textDoc([baseStroke], images: [photo], texts: [milk]).write(to: ipad.appendingPathComponent("Plan.ink"))
+        var report = try sync(ipad, "iPad")
+        expect(report.committed && report.pushed, "iPad pushes a note with text")
+        _ = try GitRepository.clone(from: remote.path, to: mac.path, credentials: nil)
+        expect(texts(at: mac.appendingPathComponent("Plan.ink")) == [milk], "the Mac clones the typed text")
+        expect((texts(at: mac.appendingPathComponent("Old.ink"))).isEmpty
+               && decoded(try? Data(contentsOf: mac.appendingPathComponent("Old.ink")))?.pkDrawing.strokes.count == 1,
+               "a note from before text existed clones fine")
+
+        // iPad rewords one line and adds another; the Mac adds ink and a line of its own.
+        let macStroke = stroke(y: 300, at: t0.addingTimeInterval(60))
+        try textDoc([baseStroke], images: [photo], texts: [oat, sam]).write(to: ipad.appendingPathComponent("Plan.ink"))
+        try textDoc([baseStroke, macStroke], images: [photo], texts: [milk, chapter]).write(to: mac.appendingPathComponent("Plan.ink"))
+        // And the old note gains text on iPad while the Mac draws on it.
+        try textDoc([baseStroke], texts: [sam]).write(to: ipad.appendingPathComponent("Old.ink"))
+        try textDoc([baseStroke, macStroke]).write(to: mac.appendingPathComponent("Old.ink"))
+        _ = try sync(ipad, "iPad")
+        report = try sync(mac, "Mac")
+        expect(report.conflicts.sorted() == ["Old.ink", "Plan.ink"], "both edited notes are merged, not copied")
+        let copies = (try? fm.contentsOfDirectory(atPath: mac.path).filter { $0.contains("conflict") || $0.hasPrefix("Plan (") }) ?? []
+        expect(copies.isEmpty, "no conflict copy for ink notes with text")
+        let plan = decoded(try? Data(contentsOf: mac.appendingPathComponent("Plan.ink")))
+        expect(Set(plan?.texts?.map(\.id) ?? []) == ["t1", "t2", "t3"] && plan?.texts?.first(where: { $0.id == "t1" })?.text == "Buy oat milk",
+               "merged note has the reworded line and both added lines")
+        expect(plan?.pkDrawing.strokes.count == 2 && plan?.images == [photo], "…and the Mac's ink and the picture")
+        let old = decoded(try? Data(contentsOf: mac.appendingPathComponent("Old.ink")))
+        expect(old?.texts?.map(\.id) == ["t2"] && old?.pkDrawing.strokes.count == 2, "an old note merges with text added on the other device")
+        _ = try sync(ipad, "iPad")
+        expect(texts(at: ipad.appendingPathComponent("Plan.ink")) == plan?.texts
+               && texts(at: ipad.appendingPathComponent("Old.ink")) == old?.texts, "the iPad converges on the merged text")
+
+        // A line deleted on one device while the other leaves it alone.
+        try textDoc([baseStroke, macStroke], images: [photo], texts: [oat, chapter]).write(to: mac.appendingPathComponent("Plan.ink"))
+        _ = try sync(mac, "Mac")
+        _ = try sync(ipad, "iPad")
+        expect(Set(texts(at: ipad.appendingPathComponent("Plan.ink")).map(\.id)) == ["t1", "t3"], "a deleted line is deleted on the other device")
+    } catch {
+        failures += 1
+        print("  FAIL  threw: \(error.localizedDescription)")
+    }
 }
