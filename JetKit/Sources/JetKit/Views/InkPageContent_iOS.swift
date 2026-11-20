@@ -1,12 +1,14 @@
 #if os(iOS)
 import UIKit
+import os
 
-/// What sits on the page under the ink: pictures (and a PDF's pages). It lives inside the canvas's
+/// What sits on the page under the ink: pictures, typed text (and a PDF's pages). It lives inside the canvas's
 /// scroll view, in page points, scaled with the zoom, so it scrolls and zooms exactly with the ink.
 final class PageContentView: UIView {
     private let root: URL
     private var imageViews: [String: UIImageView] = [:]
     private var loadedPaths: [String: String] = [:]
+    private var textViews: [String: InkTextView] = [:]
 
     init(root: URL) {
         self.root = root
@@ -24,6 +26,38 @@ final class PageContentView: UIView {
         bounds = CGRect(origin: .zero, size: pageSize)
         layer.position = .zero
         transform = CGAffineTransform(scaleX: zoom, y: zoom)
+    }
+
+    /// Typed text, over the pictures. `hiding` is the one open in an editor, which shows it instead.
+    func setTexts(_ texts: [InkText], hiding hiddenID: String?) {
+        let ids = Set(texts.map(\.id))
+        for (id, view) in textViews where !ids.contains(id) {
+            view.removeFromSuperview()
+            textViews[id] = nil
+        }
+        for text in texts {
+            let view = textViews[text.id] ?? makeTextView(for: text.id)
+            if view.text != text { view.text = text }
+            view.frame = text.frame
+            view.isHidden = text.id == hiddenID
+            bringSubviewToFront(view)
+        }
+    }
+
+    func frame(ofText id: String) -> CGRect? { textViews[id]?.frame }
+
+    /// Shows one text moved (and rewrapped) without touching the rest, for live dragging.
+    func showMoved(_ text: InkText) {
+        guard let view = textViews[text.id] else { return }
+        view.text = text
+        view.frame = text.frame
+    }
+
+    private func makeTextView(for id: String) -> InkTextView {
+        let view = InkTextView()
+        addSubview(view)
+        textViews[id] = view
+        return view
     }
 
     /// A PDF's pages, behind everything else. Each page draws itself in tiles, sharp at any zoom.
@@ -52,6 +86,8 @@ final class PageContentView: UIView {
                 load(image.path, into: view)
             }
         }
+        // Text stays over the pictures.
+        for view in textViews.values { bringSubviewToFront(view) }
     }
 
     func frame(ofImage id: String) -> CGRect? { imageViews[id]?.frame }
@@ -90,6 +126,68 @@ final class PageContentView: UIView {
             }
         }
     }
+}
+
+/// One piece of typed text on the page, drawn with `InkTextLayout` like every other rendering of it.
+/// It draws in tiles, like a PDF page: sharp at any zoom, with no backing store bigger than the screen
+/// needs and no redrawing while a pinch is under way.
+final class InkTextView: UIView {
+    override class var layerClass: AnyClass { InkTextTiledLayer.self }
+
+    /// What the tiles draw, read on CATiledLayer's background threads.
+    private let content = OSAllocatedUnfairLock(initialState: (text: InkText(text: "", origin: .zero, width: InkText.minimumWidth),
+                                                               color: InkTextLayout.color(dark: false)))
+
+    var text: InkText {
+        get { content.withLock { $0.text } }
+        set {
+            let changed = content.withLock { state -> Bool in
+                guard state.text != newValue else { return false }
+                // Moving it alone needs no redraw: tiles are drawn relative to the view.
+                let redraw = state.text.text != newValue.text || state.text.width != newValue.width
+                state.text = newValue
+                return redraw
+            }
+            if changed { setNeedsDisplay() }
+        }
+    }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isOpaque = false
+        backgroundColor = .clear
+        isUserInteractionEnabled = false
+        let tiled = layer as! CATiledLayer
+        tiled.levelsOfDetail = 4
+        tiled.levelsOfDetailBias = 4
+        tiled.tileSize = CGSize(width: 512, height: 512)
+        refreshColor()
+        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (view: InkTextView, _: UITraitCollection) in
+            view.refreshColor()
+            view.setNeedsDisplay()
+        }
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    private func refreshColor() {
+        let color = UIColor.label.resolvedColor(with: traitCollection).cgColor
+        content.withLock { $0.color = color }
+    }
+
+    // CATiledLayer calls this on background threads, one tile at a time.
+    override func draw(_ rect: CGRect) {
+        guard let context = UIGraphicsGetCurrentContext() else { return }
+        let (text, color) = content.withLock { ($0.text, $0.color) }
+        context.translateBy(x: -CGFloat(text.x), y: -CGFloat(text.y))
+        InkTextLayout.draw(text, in: context, color: color)
+    }
+}
+
+/// A tiled layer that shows new tiles at once, so edited text doesn't fade in.
+final class InkTextTiledLayer: CATiledLayer {
+    override class func fadeDuration() -> CFTimeInterval { 0 }
 }
 
 /// One PDF page, drawn on demand in tiles (at a finer level of detail as you zoom in).

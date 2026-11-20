@@ -45,6 +45,15 @@ struct InkNoteView: View {
                         .tint(model.mode == .insertSpace ? .accentColor : nil)
                         .help("Drag to insert or remove space")
                     }
+                    if pdf == nil {
+                        Button { model.beginAddingText() } label: {
+                            Label("Add Text", systemImage: "character.textbox")
+                                .symbolVariant(model.isAddingText ? .fill : .none)
+                        }
+                        .tint(model.isAddingText ? .accentColor : nil)
+                        .accessibilityIdentifier("ink-add-text")
+                        .help("Tap the page where the text should go, then type")
+                    }
                     Menu {
                         ImageSourceButtons(source: $imageSource)
                     } label: {
@@ -59,7 +68,7 @@ struct InkNoteView: View {
                     }
                 }
                 #else
-                InkSurfaceToolbar(model: model)
+                InkSurfaceToolbar(model: model, allowsText: pdf == nil)
                 #endif
                 ToolbarItem(placement: .primaryAction) {
                     Menu {
@@ -129,7 +138,10 @@ struct InkNoteView: View {
                 PDFPagesView(pages: pdf, drawing: model.drawing, images: model.images, root: session.root,
                              generation: model.generation, session: session, place: placePicture, writer: model)
             } else {
-                InkPagesView(drawing: model.drawing, images: model.images, root: session.root, paper: model.paper,
+                InkPagesView(drawing: model.drawing, images: model.images,
+                             texts: model.texts.filter { $0.id != model.editingTextID },
+                             editorBottom: model.textEditorBottom,
+                             root: session.root, paper: model.paper,
                              generation: model.generation, session: session, place: placePicture, writer: model)
             }
         }
@@ -172,8 +184,8 @@ enum InkRenderer {
 
     /// The page area `rect` with its pictures under the ink, as a bitmap `scale` pixels per point.
     /// `background` fills it first (nil leaves it transparent).
-    static func compose(_ drawing: PKDrawing, images: [InkImage], root: URL, rect: CGRect, scale: CGFloat,
-                        dark: Bool, background: CGColor? = nil) -> CGImage? {
+    static func compose(_ drawing: PKDrawing, images: [InkImage], texts: [InkText] = [], root: URL, rect: CGRect,
+                        scale: CGFloat, dark: Bool, background: CGColor? = nil) -> CGImage? {
         let width = max(1, Int((rect.width * scale).rounded())), height = max(1, Int((rect.height * scale).rounded()))
         guard let space = CGColorSpace(name: CGColorSpace.sRGB),
               let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
@@ -201,10 +213,27 @@ enum InkRenderer {
                 draw(picture, in: image.frame)
             }
         }
+        // Typed text over the pictures, under the ink, so handwriting can mark it up.
+        for text in texts where text.frame.intersects(rect) {
+            InkTextLayout.draw(text, in: context, color: InkTextLayout.color(dark: dark))
+        }
         if !drawing.strokes.isEmpty, drawing.bounds.intersects(rect), let ink = cgImage(InkRenderer.image(drawing, rect: rect, scale: scale, dark: dark)) {
             draw(ink, in: rect)
         }
         return context.makeImage()
+    }
+
+    /// A number that changes when the typed text touching `rect` changes.
+    static func signature(of texts: [InkText], in rect: CGRect) -> Int {
+        var hasher = Hasher()
+        for text in texts where text.frame.intersects(rect) {
+            hasher.combine(text.id)
+            hasher.combine(text.text)
+            hasher.combine(text.x)
+            hasher.combine(text.y)
+            hasher.combine(text.width)
+        }
+        return hasher.finalize()
     }
 
     /// A number that changes when the strokes touching `rect` change (one added, erased or replaced), so a
@@ -267,6 +296,9 @@ struct PaperLines: View {
 struct InkPagesView: View {
     let drawing: PKDrawing
     var images: [InkImage] = []
+    var texts: [InkText] = []
+    /// The bottom of an open text editor (page points), which the page grows to fit.
+    var editorBottom: CGFloat?
     var root: URL = URL(fileURLWithPath: "/")
     let paper: PaperStyle
     let generation: Int
@@ -283,8 +315,9 @@ struct InkPagesView: View {
     var body: some View {
         GeometryReader { geometry in
             let scale = max(geometry.size.width / InkDocument.pageWidth, 0.01)
-            let content = images.reduce(drawing.bounds) { $0.union($1.frame) }
-            let inkBottom = content.isNull ? 0 : content.maxY + 200
+            let content = texts.reduce(images.reduce(drawing.bounds) { $0.union($1.frame) }) { $0.union($1.frame) }
+            let bottom = max(content.isNull ? 0 : content.maxY, editorBottom ?? 0)
+            let inkBottom = bottom > 0 ? bottom + 200 : 0
             let pageHeight = max(inkBottom, geometry.size.height / scale)
             let count = max(1, Int((pageHeight / tile).rounded(.up)))
             ScrollView {
@@ -295,11 +328,13 @@ struct InkPagesView: View {
                             InkTile(
                                 drawing: drawing,
                                 images: images,
+                                texts: texts,
                                 root: root,
                                 rect: rect,
                                 dark: colorScheme == .dark,
                                 generation: generation,
-                                inkKey: InkRenderer.signature(of: drawing, in: rect)
+                                inkKey: InkRenderer.signature(of: drawing, in: rect),
+                                textKey: InkRenderer.signature(of: texts, in: rect)
                             )
                             .background(PaperLines(paper: paper, spacing: InkDocument.lineSpacing * scale))
                             .frame(width: geometry.size.width, height: tile * scale)
@@ -324,12 +359,15 @@ struct InkPagesView: View {
 private struct InkTile: View {
     let drawing: PKDrawing
     let images: [InkImage]
+    let texts: [InkText]
     let root: URL
     let rect: CGRect
     let dark: Bool
     let generation: Int
     /// Changes when the ink on this tile does (see `InkRenderer.signature`).
     let inkKey: Int
+    /// Changes when the typed text on this tile does.
+    let textKey: Int
     @State private var image: PlatformImage?
 
     var body: some View {
@@ -340,10 +378,10 @@ private struct InkTile: View {
                 Color.clear
             }
         }
-        .task(id: "\(generation)-\(dark)-\(inkKey)-\(images.map(\.frame.debugDescription).joined())") {
-            let hasImages = images.contains { $0.frame.intersects(rect) }
+        .task(id: "\(generation)-\(dark)-\(inkKey)-\(textKey)-\(images.map(\.frame.debugDescription).joined())") {
+            let hasImages = images.contains { $0.frame.intersects(rect) } || texts.contains { $0.frame.intersects(rect) }
             if hasImages {
-                image = InkRenderer.compose(drawing, images: images, root: root, rect: rect, scale: 2, dark: dark)
+                image = InkRenderer.compose(drawing, images: images, texts: texts, root: root, rect: rect, scale: 2, dark: dark)
                     .map { InkRenderer.platformImage($0, scale: 2) }
             } else {
                 image = drawing.bounds.intersects(rect)
@@ -384,8 +422,8 @@ struct InkEmbedView: View {
             }
             let rect = bounds.insetBy(dx: -16, dy: -16)
             aspect = rect.width / rect.height
-            image = InkRenderer.compose(document.pkDrawing, images: document.images ?? [], root: root, rect: rect,
-                                        scale: 2, dark: colorScheme == .dark)
+            image = InkRenderer.compose(document.pkDrawing, images: document.images ?? [], texts: document.texts ?? [],
+                                        root: root, rect: rect, scale: 2, dark: colorScheme == .dark)
                 .map { InkRenderer.platformImage($0, scale: 2) }
         }
     }
