@@ -11,6 +11,16 @@ Plain-file notes with git sync, for iPad and Mac.
 - **Pictures**: insert photos or image files into handwritten notes (under the ink; hold a finger on one
   to move, resize or delete it) and into Markdown notes (`![[name.png]]` at the cursor). They're saved
   in `Attachments/`; photos become JPEGs at most 2560 px.
+- **Typed text**: Add Text (toolbar) puts plain, multiline text on a handwritten page. On iPad, tap
+  Add Text, then tap where the text goes and type (Done or Delete above the keyboard); tap typed text
+  with a finger to edit it, or hold and drag it to move it. On the Mac, pick the Add Text tool, click
+  the page and type (Esc or a click elsewhere finishes); click text to edit it, drag it to move it, or
+  right-click it with any tool for Edit Text and Delete Text. Emptying text removes it. Text sits on the
+  ruled lines, under the ink, and is undoable, moved by Insert Space, shown in embeds, indexed for search
+  exactly as typed, and given to the AI helper. Notes keep it in an optional `texts` list in the `.ink`
+  file (left out when there's none); text added or edited on two devices merges by id, and if both reword
+  the same text, the other device's wording is kept as a copy just below. Older Jet versions open such
+  notes without the text and drop it if they save them.
 - **Other files**: PDFs open on the handwriting canvas, so you can write on them with the same tools;
   the ink is kept in a hidden `.Name.pdf.ink` beside the PDF (which is never modified) and can be
   shared as an annotated copy. Text and code files (`.txt`, `.csv`, `.json`, …) open in a plain editor;
