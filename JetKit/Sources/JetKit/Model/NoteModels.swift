@@ -47,12 +47,34 @@ public final class InkNoteModel {
     @ObservationIgnored public private(set) var drawing = PKDrawing()
     /// Pictures on the page. Observed, so the Mac's read-only view redraws when they change.
     public private(set) var images: [InkImage] = []
+    /// Typed text on the page (Add Text). Observed, so the page redraws when it changes.
+    public private(set) var texts: [InkText] = []
+    /// The text being typed in an editor right now, which the page leaves out so it isn't shown twice.
+    public var editingTextID: String?
+    /// True while Add Text is waiting for a place on the page or text is being typed, for the toolbar.
+    public var isAddingText = false
+    /// The text in an open editor as typed so far. It is saved with the note (a save or a sync while
+    /// typing keeps it) but only becomes an undoable change when the editor closes. Set it through
+    /// `updateTextDraft(_:)`, so each change also schedules a save.
+    @ObservationIgnored public var textDraft: InkText?
+    /// The bottom of the open text editor, in page points (nil when none is open). Observed, so the
+    /// page grows to fit text typed near its end. Set by the canvas.
+    public var textEditorBottom: CGFloat?
     @ObservationIgnored public var undo: () -> Void = {}
     /// Places a picture (a vault-relative path) in view on the page. Set by the canvas.
     @ObservationIgnored public var insertImage: (_ path: String, _ pixelSize: CGSize) -> Void = { _, _ in }
     @ObservationIgnored public var redo: () -> Void = {}
     /// Turns lasso or insert space on (or back off to the previous tool). Set by the canvas.
     @ObservationIgnored public var toggleTool: (InkMode) -> Void = { _ in }
+    /// The Add Text command: lets the writer place a text box on the page and type in it. Set by the canvas.
+    @ObservationIgnored public var beginAddingText: () -> Void = {}
+    /// Told after each text change made through `addText`, `updateText`, `moveText` or `removeText`,
+    /// with the texts as they were before, so the canvas can make it undoable and redraw.
+    @ObservationIgnored public var textsEdited: (_ before: [InkText], _ actionName: String) -> Void = { _, _ in }
+    /// Told, synchronously, when a reload from disk replaced the open editor's draft (see
+    /// `reconcileTextDraft()`): with the new draft, or nil when the text was deleted on another device,
+    /// so the editor shows it (or closes without putting it back) before anything else can save or close it.
+    @ObservationIgnored public var textDraftReloaded: (_ draft: InkText?) -> Void = { _ in }
     @ObservationIgnored public var onWrite: () -> Void = {}
 
     @ObservationIgnored private var lastSaved: Data?
@@ -73,9 +95,31 @@ public final class InkNoteModel {
         isLoading = false
         drawing = document.pkDrawing
         images = document.images ?? []
+        texts = document.texts ?? []
         lastSaved = data
         dirty = false
         generation += 1
+        reconcileTextDraft()
+    }
+
+    /// After a reload, the file is the truth for the open editor's text too: a reload only happens
+    /// when nothing is waiting to save, so the draft was written before the sync and the file holds it
+    /// merged with the other device's changes (its rewording, moving or deleting of the same text).
+    /// - on the page: the draft becomes that text, so closing the editor untouched changes nothing;
+    /// - not on the page but blank (new text not typed in yet, never saved): it stays as it is;
+    /// - not on the page otherwise: it was deleted on another device, so the draft is dropped.
+    private func reconcileTextDraft() {
+        guard let draft = textDraft else { return }
+        let reloaded: InkText?
+        if let onPage = texts.first(where: { $0.id == draft.id }) {
+            reloaded = onPage
+        } else {
+            reloaded = draft.isBlank ? draft : nil
+        }
+        // Set directly, not through `updateTextDraft`: the file already holds this, so nothing needs saving.
+        textDraft = reloaded
+        if reloaded == nil { editingTextID = nil }
+        textDraftReloaded(reloaded)
     }
 
     public func drawingChanged(_ newDrawing: PKDrawing) {
@@ -89,6 +133,74 @@ public final class InkNoteModel {
         guard newImages != images else { return }
         images = newImages
         scheduleSave()
+    }
+
+    /// Replaces the page's typed text as is (undo and redo, live dragging). Blank entries are dropped.
+    public func textsChanged(_ newTexts: [InkText]) {
+        let kept = newTexts.filter { !$0.isBlank }
+        guard kept != texts else { return }
+        texts = kept
+        scheduleSave()
+    }
+
+    /// Adds typed text starting where the page was clicked or tapped (see `InkText.placement`).
+    /// Returns nil, adding nothing, when the text is blank.
+    @discardableResult
+    public func addText(_ string: String, at point: CGPoint, id: String = UUID().uuidString) -> InkText? {
+        let placement = InkText.placement(at: point)
+        let text = InkText(id: id, text: string, origin: placement.origin, width: placement.width)
+        guard !text.isBlank else { return nil }
+        commitTexts(texts + [text], name: "Add Text")
+        return text
+    }
+
+    /// Changes the wording of a text; blank wording removes it.
+    public func updateText(_ id: String, to string: String) {
+        guard let index = texts.firstIndex(where: { $0.id == id }), texts[index].text != string else { return }
+        var updated = texts
+        if string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            updated.remove(at: index)
+            commitTexts(updated, name: "Delete Text")
+        } else {
+            updated[index].text = string
+            commitTexts(updated, name: "Edit Text")
+        }
+    }
+
+    /// Moves a text so its top-left corner is at `origin` (kept on the page). Moving it right narrows
+    /// its wrap width to fit inside the right margin, so it rewraps; moving it left keeps its width.
+    public func moveText(_ id: String, to origin: CGPoint) {
+        guard let index = texts.firstIndex(where: { $0.id == id }) else { return }
+        var updated = texts
+        updated[index] = InkText.moved(updated[index], to: origin)
+        guard updated != texts else { return }
+        commitTexts(updated, name: "Move Text")
+    }
+
+    public func removeText(_ id: String) {
+        guard texts.contains(where: { $0.id == id }) else { return }
+        commitTexts(texts.filter { $0.id != id }, name: "Delete Text")
+    }
+
+    /// The typed text at a page point, the topmost when they overlap. Only its written lines count,
+    /// not the empty rest of its wrap width, so writing beside short text still makes ink.
+    public func text(at point: CGPoint) -> InkText? {
+        texts.last { $0.contains(point) }
+    }
+
+    /// Sets the open editor's text as typed so far (nil when the editor closes). The draft is saved
+    /// with the note after the usual pause, so what is being typed survives a crash or a sync.
+    public func updateTextDraft(_ draft: InkText?) {
+        guard draft != textDraft else { return }
+        textDraft = draft
+        // Also when it closes, so a draft saved earlier never outlives an editor that was emptied.
+        scheduleSave()
+    }
+
+    private func commitTexts(_ newTexts: [InkText], name: String) {
+        let before = texts
+        textsChanged(newTexts)
+        if texts != before { textsEdited(before, name) }
     }
 
     /// Adds a picture (a vault-relative path) centred on `point`, kept inside `bounds` (the page, or
@@ -121,11 +233,20 @@ public final class InkNoteModel {
         }
     }
 
+    /// The page's typed text with the editor's draft in it.
+    private var textsForSaving: [InkText] {
+        guard let draft = textDraft else { return texts }
+        var result = texts
+        if let index = result.firstIndex(where: { $0.id == draft.id }) { result[index] = draft } else { result.append(draft) }
+        return result.filter { !$0.isBlank }
+    }
+
     public func saveNow() {
         saveTask?.cancel()
-        guard dirty else { return }
+        guard dirty || textDraft != nil else { return }
         dirty = false
-        let data = InkDocument(paper: paper, drawing: drawing.dataRepresentation(), images: images).encoded()
+        let data = InkDocument(paper: paper, drawing: drawing.dataRepresentation(), images: images,
+                               texts: textsForSaving).encoded()
         guard data != lastSaved else { return }
         do {
             try data.write(to: url, options: .atomic)
