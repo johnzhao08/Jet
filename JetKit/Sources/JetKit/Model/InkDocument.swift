@@ -21,11 +21,15 @@ public struct InkDocument: Codable, Equatable, Sendable {
     /// Pictures placed on the page, under the ink. Left out of the file when there are none, so notes
     /// without pictures stay byte-for-byte what they were.
     public var images: [InkImage]?
+    /// Typed text on the page, over the pictures and under the ink. Left out of the file when there is
+    /// none, like `images`, so notes without typed text keep their exact format.
+    public var texts: [InkText]?
 
-    public init(paper: PaperStyle = .lined, drawing: Data = Data(), images: [InkImage] = []) {
+    public init(paper: PaperStyle = .lined, drawing: Data = Data(), images: [InkImage] = [], texts: [InkText] = []) {
         self.paper = paper
         self.drawing = drawing
         self.images = images.isEmpty ? nil : images
+        self.texts = texts.isEmpty ? nil : texts
     }
 
     public static func decode(_ data: Data) -> InkDocument? {
@@ -43,9 +47,10 @@ public struct InkDocument: Codable, Equatable, Sendable {
         (try? PKDrawing(data: drawing)) ?? PKDrawing()
     }
 
-    /// Everything on the page: ink and pictures.
+    /// Everything on the page: ink, pictures and typed text.
     public var contentBounds: CGRect {
-        (images ?? []).reduce(pkDrawing.bounds) { $0.union($1.frame) }
+        let withImages = (images ?? []).reduce(pkDrawing.bounds) { $0.union($1.frame) }
+        return (texts ?? []).reduce(withImages) { $0.union($1.frame) }
     }
 }
 
@@ -116,6 +121,9 @@ public enum InkMerge {
         let images = mergeImages(base: base.flatMap(InkDocument.decode)?.images ?? [],
                                  ours: ourDoc.images ?? [], theirs: theirDoc.images ?? [])
         result.images = images.isEmpty ? nil : images
+        let texts = mergeTexts(base: base.flatMap(InkDocument.decode)?.texts ?? [],
+                               ours: ourDoc.texts ?? [], theirs: theirDoc.texts ?? [])
+        result.texts = texts.isEmpty ? nil : texts
         return result.encoded()
     }
 
@@ -132,5 +140,65 @@ public enum InkMerge {
         }
         merged += theirs.filter { !ourIDs.contains($0.id) && baseByID[$0.id] == nil }
         return merged
+    }
+
+    /// Typed text merges by id, never losing what someone wrote:
+    /// - added on either device: kept;
+    /// - removed on one device: removed, unless its wording was changed on the other, then that edit stays;
+    /// - changed on one device: takes that change;
+    /// - changed on both: wording and placement merge separately, this device winning where both changed
+    ///   the same thing. If both reworded it differently, the other wording is kept too, as a copy just
+    ///   below (id `<id>-conflict`, or `<id>-conflict-2`… when earlier copies exist), so neither is lost.
+    static func mergeTexts(base: [InkText], ours: [InkText], theirs: [InkText]) -> [InkText] {
+        let baseByID = Dictionary(base.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        let theirByID = Dictionary(theirs.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        let ourIDs = Set(ours.map(\.id))
+        // Every id either side has, so a new conflict copy never replaces an earlier one.
+        var taken = Set(base.map(\.id)).union(ourIDs).union(theirByID.keys)
+        var merged: [InkText] = []
+        for text in ours {
+            guard let original = baseByID[text.id] else {                       // added here
+                merged.append(text)
+                continue
+            }
+            guard let their = theirByID[text.id] else {                         // removed there
+                if text.text != original.text { merged.append(text) }
+                continue
+            }
+            var result = text
+            if text.text == original.text { result.text = their.text }
+            if text.x == original.x, text.y == original.y, text.width == original.width {
+                result.x = their.x
+                result.y = their.y
+                result.width = their.width
+            }
+            merged.append(result)
+            if text.text != original.text, their.text != original.text, their.text != text.text {
+                var copy = their
+                copy.id = conflictID(for: text.id, taken: taken)
+                taken.insert(copy.id)
+                copy.y = Double(result.frame.maxY + InkText.lineHeight)
+                merged.append(copy)
+            }
+        }
+        for their in theirs where !ourIDs.contains(their.id) {
+            if let original = baseByID[their.id] {                              // removed here
+                if their.text != original.text { merged.append(their) }        // ...but reworded there
+            } else {
+                merged.append(their)                                            // added there
+            }
+        }
+        var seen = Set<String>()
+        return merged.filter { seen.insert($0.id).inserted }
+    }
+
+    /// The id for a conflict copy of `id`: `<id>-conflict`, or `<id>-conflict-2`, `-3`… when that is
+    /// taken. It depends only on the ids involved, so both devices merging the same edits agree.
+    static func conflictID(for id: String, taken: Set<String>) -> String {
+        let first = id + "-conflict"
+        guard taken.contains(first) else { return first }
+        var number = 2
+        while taken.contains("\(first)-\(number)") { number += 1 }
+        return "\(first)-\(number)"
     }
 }
