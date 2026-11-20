@@ -13,6 +13,8 @@ import PencilKit
 /// - Pencil double-tap and squeeze: while the tool picker is showing, the system handles both and
 ///   follows the user's choices in Settings > Apple Pencil. With the picker hidden, this controller
 ///   handles them itself (see `perform(_:)`), so the gestures keep working on a clean page.
+/// - Add Text (toolbar): the next tap on the page opens a text editor there. A finger tap on typed
+///   text edits it; holding a finger on it and dragging moves it. The keyboard bar has Done and Delete.
 struct InkCanvasRepresentable: UIViewControllerRepresentable {
     let model: InkNoteModel
     let root: URL
@@ -33,7 +35,7 @@ struct InkCanvasRepresentable: UIViewControllerRepresentable {
 }
 
 final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPencilInteractionDelegate,
-    PKToolPickerObserver, UIGestureRecognizerDelegate {
+    PKToolPickerObserver, UIGestureRecognizerDelegate, UITextViewDelegate {
     private let model: InkNoteModel
     private let pdf: PDFPages?
     private let canvas = PKCanvasView()
@@ -62,7 +64,7 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
     private var lassoSelection: [CGPoint]?
     /// The drawing as it was when an insert-space drag began, the line it started at (page points),
     /// and how far the strokes below may move up before they would overlap the strokes above.
-    private var spaceDrag: (original: PKDrawing, images: [InkImage], lineY: CGFloat, maxUp: CGFloat)?
+    private var spaceDrag: (original: PKDrawing, images: [InkImage], texts: [InkText], lineY: CGFloat, maxUp: CGFloat)?
     /// Where the finger or Pencil first touched, in canvas coordinates. A pan is only recognised after
     /// some movement, so measuring from the touch-down keeps the line where the drag really started.
     private var spaceTouchStart: CGPoint?
@@ -73,6 +75,16 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
     private var imageDragStart: (images: [InkImage], frame: CGRect)?
     private lazy var imageLongPress = UILongPressGestureRecognizer(target: self, action: #selector(handleImageLongPress(_:)))
     private lazy var deselectTap = UITapGestureRecognizer(target: self, action: #selector(handleDeselectTap(_:)))
+
+    /// Typed text: the open editor and the text it edits (new text gets its id up front), whether Add
+    /// Text is waiting for a tap to place it, and typed text being dragged (its start and the texts then).
+    private var textEditor: InkTextEditorView?
+    private var editingText: InkText?
+    private var placingText = false
+    private var textMove: (text: InkText, start: CGPoint, before: [InkText])?
+    private lazy var placeTextTap = UITapGestureRecognizer(target: self, action: #selector(handlePlaceTextTap(_:)))
+    private lazy var editTextTap = UITapGestureRecognizer(target: self, action: #selector(handleEditTextTap(_:)))
+    private var keyboardObserver: NSObjectProtocol?
 
     private var appliedGeneration = -1
     private var paper = PaperStyle.lined
@@ -112,6 +124,7 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
         paperView.isUserInteractionEnabled = false
         view.addSubview(paperView)
 
+        canvas.accessibilityIdentifier = "ink-page-canvas"
         canvas.frame = view.bounds
         canvas.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         canvas.backgroundColor = .clear
@@ -141,6 +154,22 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
         deselectTap.isEnabled = false
         deselectTap.delegate = self
         canvas.addGestureRecognizer(deselectTap)
+
+        // Add Text: the next tap (finger or Pencil) places the text. Ink is off until then.
+        placeTextTap.isEnabled = false
+        placeTextTap.delegate = self
+        canvas.addGestureRecognizer(placeTextTap)
+        // A finger tap on typed text edits it (it only takes touches that land on text, so ink never waits for it).
+        editTextTap.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+        editTextTap.delegate = self
+        canvas.addGestureRecognizer(editTextTap)
+        canvas.drawingGestureRecognizer.require(toFail: editTextTap)
+        keyboardObserver = NotificationCenter.default.addObserver(
+            forName: UIResponder.keyboardWillChangeFrameNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            let frame = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect
+            MainActor.assumeIsolated { self?.keyboardMoved(to: frame) }
+        }
 
         configureToolPicker()
 
@@ -186,9 +215,22 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
         view.addInteraction(UIPencilInteraction(delegate: self))
 
         model.toggleTool = { [weak self] tool in self?.toggle(tool) }
-        model.undo = { [weak self] in self?.canvas.undoManager?.undo() }
+        model.undo = { [weak self] in
+            self?.endTextEditing()
+            self?.canvas.undoManager?.undo()
+        }
         model.insertImage = { [weak self] path, pixels in self?.insertImage(path, pixelSize: pixels) }
-        model.redo = { [weak self] in self?.canvas.undoManager?.redo() }
+        model.redo = { [weak self] in
+            self?.endTextEditing()
+            self?.canvas.undoManager?.redo()
+        }
+        model.beginAddingText = { [weak self] in self?.addTextCommand() }
+        model.textsEdited = { [weak self] before, name in self?.textsEdited(before: before, name: name) }
+        model.textDraftReloaded = { [weak self] draft in self?.textDraftReloaded(draft) }
+    }
+
+    deinit {
+        if let keyboardObserver { NotificationCenter.default.removeObserver(keyboardObserver) }
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -198,6 +240,8 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
+        endTextEditing(refocus: false)
+        stopPlacingText()
         model.drawingChanged(canvas.drawing)
         model.saveNow()
     }
@@ -230,11 +274,14 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
             rebuildToolPicker()
         }
         if generation != appliedGeneration {
+            let reloaded = appliedGeneration >= 0
             appliedGeneration = generation
+            if reloaded { dropStaleSnapshots() }
             canvas.drawing = model.drawing
             images = model.images
             selectImage(nil)
             pageContent.setImages(images)
+            refreshTexts()
             pageHeight = 0
             updateContentSize()
         }
@@ -246,6 +293,40 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
             pickerWanted = showsToolPicker
             if view.window != nil { showToolPicker(showsToolPicker) }
         }
+    }
+
+    /// The note was replaced from disk (a sync). Undo steps and gestures under way hold the page as it
+    /// was, and applying them would put back what the sync replaced, so they are dropped (as on the Mac).
+    /// Text being typed carries on, showing the reloaded wording (see `textDraftReloaded`); closing it
+    /// records a fresh change against the reloaded page only if something was typed since.
+    private func dropStaleSnapshots() {
+        canvas.undoManager?.removeAllActions()
+        if spaceDrag != nil {
+            spaceDrag = nil
+            spaceGuide.hide()
+        }
+        textMove = nil
+        imageDragStart = nil
+        applyModeState()
+    }
+
+    /// The note was reloaded while text is being typed: the open editor takes the text as the reload
+    /// left it (another device may have reworded or moved it), right away, so closing or saving can't
+    /// put back the old wording. Nil means it was deleted elsewhere: the editor closes, adding nothing.
+    private func textDraftReloaded(_ draft: InkText?) {
+        guard let editor = textEditor, editingText != nil else { return }
+        guard let draft else {
+            endTextEditing(commit: false, refocus: editor.isFirstResponder)
+            return
+        }
+        editingText = draft
+        if editor.text != draft.text {
+            editor.text = draft.text
+            // Its typing steps were for the old wording (the reload drops the page's other steps too).
+            editor.undoManager?.removeAllActions()
+        }
+        layoutTextEditor()
+        updateContentSize()
     }
 
     // MARK: Tools, lasso and insert space
@@ -322,6 +403,8 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
 
     /// The toolbar's lasso and insert-space buttons: turn that tool on, or off again if it's on.
     private func toggle(_ tool: InkMode) {
+        endTextEditing()
+        stopPlacingText()
         switch tool {
         case _ where tool == mode, .draw: returnToPreviousTool()
         case .lasso: selectItem(lassoItem.identifier)
@@ -359,6 +442,8 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
         let newMode: InkMode = identifier == lassoItem.identifier ? .lasso
             : identifier == spaceItem.identifier ? .insertSpace : .draw
         if newMode != mode {
+            endTextEditing()
+            stopPlacingText()
             mode = newMode
             lassoSelection = nil
             selectImage(nil)
@@ -378,7 +463,8 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
     private func applyModeState() {
         let inserting = mode == .insertSpace
         insertSpacePan.isEnabled = inserting
-        canvas.drawingGestureRecognizer.isEnabled = !inserting
+        // No ink while text is being placed or typed: a Pencil touch off the editor only finishes it.
+        canvas.drawingGestureRecognizer.isEnabled = !inserting && !placingText && textEditor == nil
         lassoWatcher.isEnabled = mode == .lasso
         #if targetEnvironment(simulator)
         canvas.panGestureRecognizer.minimumNumberOfTouches = inserting ? 2 : 1
@@ -430,17 +516,19 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
             let start = spaceTouchStart?.y ?? (pan.location(in: canvas).y - pan.translation(in: canvas).y)
             let lineY = start / zoom
             let drawing = canvas.drawing
-            let frames = drawing.strokes.map(\.renderBounds) + images.map(\.frame)
+            let texts = model.texts
+            let frames = drawing.strokes.map(\.renderBounds) + images.map(\.frame) + texts.map(\.frame)
             let belowTop = frames.filter { $0.minY >= lineY }.map(\.minY).min() ?? lineY
             let aboveBottom = frames.filter { $0.minY < lineY }.map(\.maxY).max() ?? 0
             let maxUp = max(0, belowTop - max(aboveBottom, 0) - 4)
-            spaceDrag = (drawing, images, lineY, maxUp)
+            spaceDrag = (drawing, images, texts, lineY, maxUp)
             spaceGuide.show(lineAt: start - canvas.contentOffset.y, delta: 0)
         case .changed:
             guard let drag = spaceDrag else { return }
             let delta = max(pan.location(in: canvas).y / zoom - drag.lineY, -drag.maxUp)
             canvas.drawing = Self.shifting(drag.original, below: drag.lineY, by: delta)
             pageContent.setImages(Self.shifting(drag.images, below: drag.lineY, by: delta))
+            pageContent.setTexts(Self.shifting(drag.texts, below: drag.lineY, by: delta), hiding: nil)
             spaceGuide.show(lineAt: drag.lineY * zoom - canvas.contentOffset.y, delta: delta * zoom)
         case .ended, .cancelled, .failed:
             spaceGuide.hide()
@@ -450,12 +538,14 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
             guard pan.state == .ended, abs(delta) >= 1 else {
                 canvas.drawing = drag.original
                 pageContent.setImages(drag.images)
+                refreshTexts()
                 return
             }
             let result = PageState(drawing: Self.shifting(drag.original, below: drag.lineY, by: delta),
-                                   images: Self.shifting(drag.images, below: drag.lineY, by: delta))
+                                   images: Self.shifting(drag.images, below: drag.lineY, by: delta),
+                                   texts: Self.shifting(drag.texts, below: drag.lineY, by: delta))
             apply(result)
-            registerUndo(from: PageState(drawing: drag.original, images: drag.images), to: result,
+            registerUndo(from: PageState(drawing: drag.original, images: drag.images, texts: drag.texts), to: result,
                          name: delta > 0 ? "Insert Space" : "Remove Space")
             updateContentSize()
             // One drag per use, then back to writing.
@@ -487,16 +577,30 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
         }
     }
 
-    /// The page's ink and pictures, for undo.
+    /// Typed text that starts below `lineY` moved down by `delta` (up if negative).
+    static func shifting(_ texts: [InkText], below lineY: CGFloat, by delta: CGFloat) -> [InkText] {
+        texts.map { text in
+            guard CGFloat(text.y) >= lineY else { return text }
+            var moved = text
+            moved.y += Double(delta)
+            return moved
+        }
+    }
+
+    /// The page's ink, pictures and typed text, for undo.
     struct PageState {
         var drawing: PKDrawing
         var images: [InkImage]
+        var texts: [InkText]
     }
 
-    private var pageState: PageState { PageState(drawing: canvas.drawing, images: images) }
+    private var pageState: PageState { PageState(drawing: canvas.drawing, images: images, texts: model.texts) }
 
     private func apply(_ state: PageState) {
+        endTextEditing()
         if state.drawing != canvas.drawing { canvas.drawing = state.drawing }
+        model.textsChanged(state.texts)
+        refreshTexts()
         setImages(state.images)
     }
 
@@ -538,7 +642,7 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
 
     private func selectImage(_ id: String?) {
         selectedImageID = id
-        deselectTap.isEnabled = id != nil
+        deselectTap.isEnabled = id != nil || textEditor != nil
         updateImageOverlay()
     }
 
@@ -570,18 +674,26 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
     }
 
     @objc private func handleImageLongPress(_ press: UILongPressGestureRecognizer) {
-        guard press.state == .began, mode != .insertSpace else { return }
         let zoom = max(canvas.zoomScale, 0.01)
         let location = press.location(in: canvas)
+        if textMove != nil || press.state == .began {
+            if moveText(press, at: CGPoint(x: location.x / zoom, y: location.y / zoom)) { return }
+        }
+        guard press.state == .began, mode != .insertSpace else { return }
         guard let image = pageImage(at: CGPoint(x: location.x / zoom, y: location.y / zoom)) else { return }
         // Throw away any ink the finger started.
         canvas.drawingGestureRecognizer.isEnabled = false
-        canvas.drawingGestureRecognizer.isEnabled = mode != .insertSpace
+        applyModeState()
         selectImage(image.id)
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
     }
 
     @objc private func handleDeselectTap(_ tap: UITapGestureRecognizer) {
+        if let editor = textEditor {
+            // A tap off the text being typed finishes it.
+            if !editor.bounds.contains(tap.location(in: editor)) { endTextEditing() }
+            return
+        }
         let point = tap.location(in: view)
         if !imageOverlay.box.frame.contains(point) { selectImage(nil) }
     }
@@ -636,22 +748,231 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
         guard frame != start.frame else { return }
         var updated = images
         updated[index].frame = frame
-        let before = PageState(drawing: canvas.drawing, images: start.images)
+        let before = PageState(drawing: canvas.drawing, images: start.images, texts: model.texts)
         setImages(updated)
         registerUndo(from: before, to: pageState, name: "Move Picture")
+    }
+
+    // MARK: Typed text
+
+    private func pagePoint(_ canvasPoint: CGPoint) -> CGPoint {
+        let zoom = max(canvas.zoomScale, 0.01)
+        return CGPoint(x: canvasPoint.x / zoom, y: canvasPoint.y / zoom)
+    }
+
+    /// The Add Text command: wait for a tap to place the text (again: stop waiting, or finish typing).
+    private func addTextCommand() {
+        if textEditor != nil {
+            endTextEditing()
+        } else if placingText {
+            stopPlacingText()
+        } else {
+            if mode != .draw { returnToPreviousTool() }
+            selectImage(nil)
+            placingText = true
+            placeTextTap.isEnabled = true
+            spaceGuide.hint = "Add Text: tap the page where the text should go."
+            model.isAddingText = true
+            applyModeState()
+        }
+    }
+
+    private func stopPlacingText() {
+        guard placingText else { return }
+        placingText = false
+        placeTextTap.isEnabled = false
+        if mode == .draw { spaceGuide.hint = nil }
+        model.isAddingText = textEditor != nil
+        applyModeState()
+    }
+
+    @objc private func handlePlaceTextTap(_ tap: UITapGestureRecognizer) {
+        guard placingText else { return }
+        let point = pagePoint(tap.location(in: canvas))
+        stopPlacingText()
+        beginTextEditing(model.text(at: point), at: point)
+    }
+
+    @objc private func handleEditTextTap(_ tap: UITapGestureRecognizer) {
+        guard let text = model.text(at: pagePoint(tap.location(in: canvas))) else { return }
+        beginTextEditing(text, at: text.origin)
+    }
+
+    /// Holding a finger on typed text and dragging moves it. Returns whether the press is about text.
+    private func moveText(_ press: UILongPressGestureRecognizer, at point: CGPoint) -> Bool {
+        switch press.state {
+        case .began:
+            guard mode == .draw, textEditor == nil, let text = model.text(at: point) else { return false }
+            canvas.drawingGestureRecognizer.isEnabled = false
+            applyModeState()
+            selectImage(nil)
+            textMove = (text, point, model.texts)
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        case .changed:
+            guard let move = textMove else { return false }
+            // Shown where it would land, rewrapped if it moved right.
+            pageContent.showMoved(InkText.moved(move.text, to: CGPoint(x: move.text.x + point.x - move.start.x,
+                                                                       y: move.text.y + point.y - move.start.y)))
+        default:
+            guard let move = textMove else { return false }
+            textMove = nil
+            let target = CGPoint(x: move.text.x + point.x - move.start.x,
+                                 y: InkText.lineAligned(move.text.y + point.y - move.start.y + InkText.lineHeight / 2))
+            if press.state == .ended { model.moveText(move.text.id, to: target) }
+            refreshTexts()
+        }
+        return true
+    }
+
+    /// A text change made through the model: redraw it and make it undoable.
+    private func textsEdited(before: [InkText], name: String) {
+        refreshTexts()
+        updateContentSize()
+        registerUndo(from: PageState(drawing: canvas.drawing, images: images, texts: before), to: pageState, name: name)
+    }
+
+    private func refreshTexts() {
+        pageContent.setTexts(model.texts, hiding: model.editingTextID)
+    }
+
+    /// Opens an editor on `text`, or on new text at page point `point`.
+    private func beginTextEditing(_ text: InkText?, at point: CGPoint) {
+        endTextEditing()
+        let editing: InkText
+        if let text {
+            editing = text
+        } else {
+            let placement = InkText.placement(at: point)
+            editing = InkText(text: "", origin: placement.origin, width: placement.width)
+        }
+        editingText = editing
+        model.updateTextDraft(editing)
+        model.editingTextID = editing.id
+        model.isAddingText = true
+        refreshTexts()
+
+        let editor = InkTextEditorView()
+        editor.text = editing.text
+        editor.delegate = self
+        editor.onDone = { [weak self] in self?.endTextEditing() }
+        editor.onDelete = { [weak self] in
+            self?.textEditor?.text = ""
+            self?.endTextEditing()
+        }
+        textEditor = editor
+        canvas.addSubview(editor)
+        // PencilKit supplies its own accessibility children. Expose the active text field directly.
+        view.accessibilityElements = [editor]
+        deselectTap.isEnabled = true
+        applyModeState()
+        layoutTextEditor()
+        editor.becomeFirstResponder()
+    }
+
+    /// Closes the editor, making what was typed one undoable change (emptied text is removed), unless
+    /// `commit` is false. With `refocus`, the canvas takes focus back (and shows the tool picker); not
+    /// when focus already went somewhere else, which it would take away again.
+    private func endTextEditing(commit: Bool = true, refocus: Bool = true) {
+        guard let editor = textEditor, var text = editingText else { return }
+        textEditor = nil
+        editingText = nil
+        text.text = editor.text
+        editor.delegate = nil
+        editor.resignFirstResponder()
+        editor.removeFromSuperview()
+        view.accessibilityElements = nil
+        model.updateTextDraft(nil)
+        model.textEditorBottom = nil
+        model.editingTextID = nil
+        model.isAddingText = placingText
+        deselectTap.isEnabled = selectedImageID != nil
+        applyModeState()
+        if commit {
+            if model.texts.contains(where: { $0.id == text.id }) {
+                model.updateText(text.id, to: text.text)
+            } else {
+                model.addText(text.text, at: text.origin, id: text.id)
+            }
+        }
+        refreshTexts()
+        updateContentSize()
+        // Back to writing: the canvas takes focus again, with the tool picker.
+        if refocus, view.window != nil { showToolPicker(pickerWanted) }
+    }
+
+    /// Fits the editor to its text at the current zoom. During a pinch (`settled` false) the type
+    /// isn't laid out again for every step: the editor is scaled as it is, and set afresh at the end.
+    private func layoutTextEditor(settled: Bool = true) {
+        guard let editor = textEditor, let text = editingText else { return }
+        let zoom = max(canvas.zoomScale, 0.01)
+        if settled || editor.appliedZoom == 0 { editor.apply(zoom: zoom) }
+        let typeZoom = editor.appliedZoom
+        // Tall enough for every line at this zoom, where the editor's type may wrap sooner than the page's.
+        let size = InkTextLayout.editorSize(editor.text, width: CGFloat(text.width), zoom: typeZoom)
+        editor.transform = .identity
+        editor.bounds = CGRect(x: 0, y: 0, width: size.width * typeZoom, height: size.height * typeZoom)
+        editor.center = CGPoint(x: (CGFloat(text.x) + size.width / 2) * zoom, y: (CGFloat(text.y) + size.height / 2) * zoom)
+        editor.transform = CGAffineTransform(scaleX: zoom / typeZoom, y: zoom / typeZoom)
+        let bottom = CGFloat(text.y) + size.height
+        if model.textEditorBottom != bottom { model.textEditorBottom = bottom }
+    }
+
+    func textViewDidChange(_ textView: UITextView) {
+        guard textView === textEditor, var text = editingText else { return }
+        text.text = textView.text
+        editingText = text
+        model.updateTextDraft(text)
+        layoutTextEditor()
+        updateContentSize()
+        scrollEditorIntoView()
+    }
+
+    func textViewDidEndEditing(_ textView: UITextView) {
+        // The keyboard was put away (or focus went elsewhere): the text is done. If focus went to
+        // something else (a search field, say) it stays there; only when nothing took it does the
+        // canvas take it back, with the tool picker.
+        guard textView === textEditor else { return }
+        endTextEditing(refocus: false)
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.view.window != nil, UIResponder.currentFirstResponder == nil else { return }
+            self.showToolPicker(self.pickerWanted)
+        }
+    }
+
+    /// Keeps the text being typed above the keyboard.
+    private func keyboardMoved(to frame: CGRect?) {
+        guard let frame, let window = view.window else { return }
+        let local = view.convert(frame, from: window.screen.coordinateSpace)
+        let overlap = max(0, view.bounds.maxY - local.minY)
+        canvas.contentInset.bottom = textEditor == nil ? 0 : overlap
+        scrollEditorIntoView()
+    }
+
+    private func scrollEditorIntoView() {
+        guard let editor = textEditor else { return }
+        // The line being typed on, with a little room around it.
+        let caret = editor.selectedTextRange.map { editor.caretRect(for: $0.end) } ?? .zero
+        let target = editor.convert(caret, to: canvas).insetBy(dx: 0, dy: -24)
+        canvas.scrollRectToVisible(target, animated: true)
     }
 
     // MARK: Multi-finger taps
 
     @objc private func handleUndoTap() {
+        endTextEditing()
         canvas.undoManager?.undo()
     }
 
     @objc private func handleRedoTap() {
+        endTextEditing()
         canvas.undoManager?.redo()
     }
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        if gestureRecognizer === editTextTap {
+            guard mode == .draw, !placingText, textEditor == nil else { return false }
+            return model.text(at: pagePoint(touch.location(in: canvas))) != nil
+        }
         if gestureRecognizer === lassoWatcher { lassoWatcher.zoom = canvas.zoomScale }
         if gestureRecognizer === insertSpacePan, spaceDrag == nil {
             spaceTouchStart = touch.location(in: canvas)
@@ -675,8 +996,12 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
     private func updateContentSize() {
         guard laidOutWidth > 0 else { return }
         let zoom = canvas.zoomScale
-        let bounds = images.reduce(canvas.drawing.bounds) { $0.union($1.frame) }
-        let inkBottom = bounds.isNull ? 0 : bounds.maxY
+        var bounds = images.reduce(canvas.drawing.bounds) { $0.union($1.frame) }
+        bounds = model.texts.reduce(bounds) { $0.union($1.frame) }
+        if let draft = model.textDraft { bounds = bounds.union(draft.frame) }
+        var inkBottom = bounds.isNull ? 0 : bounds.maxY
+        // The open editor, which can be a line or two taller than its text on the page.
+        if textEditor != nil, let editorBottom = model.textEditorBottom { inkBottom = max(inkBottom, editorBottom) }
         if let pdf {
             pageHeight = max(pdf.height, inkBottom + 40)
         } else {
@@ -712,16 +1037,19 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
 
     func scrollViewDidZoom(_ scrollView: UIScrollView) {
         pageContent.layout(pageSize: CGSize(width: InkDocument.pageWidth, height: pageHeight), zoom: canvas.zoomScale)
+        layoutTextEditor(settled: false)
         updatePaper()
         updateImageOverlay()
     }
 
     func canvasViewDidBeginUsingTool(_ canvasView: PKCanvasView) {
-        // Writing elsewhere puts the picture down.
+        // Writing elsewhere puts the picture down, and finishes typed text.
         if selectedImageID != nil { selectImage(nil) }
+        endTextEditing()
     }
 
     func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
+        layoutTextEditor()
         updateContentSize()
         updatePaper()
     }
@@ -885,6 +1213,75 @@ final class InsertSpaceGuideView: UIView {
     }
 }
 
+/// The editor for typed text on the page: plain multiline text laid out like `InkTextLayout` draws
+/// it (system font, ruled-line spacing) at the canvas's zoom, with Done and Delete above the keyboard.
+/// Typing has its own undo history; the canvas records the finished edit as one change.
+final class InkTextEditorView: UITextView {
+    var onDone: () -> Void = {}
+    var onDelete: () -> Void = {}
+    private let typingUndo = UndoManager()
+    /// The zoom the type is laid out for (0 before the first layout).
+    private(set) var appliedZoom: CGFloat = 0
+
+    override var undoManager: UndoManager? { typingUndo }
+
+    init() {
+        super.init(frame: .zero, textContainer: nil)
+        backgroundColor = .clear
+        textContainerInset = .zero
+        textContainer.lineFragmentPadding = 0
+        isScrollEnabled = false
+        autocorrectionType = .default
+        layer.borderColor = UIColor.tintColor.withAlphaComponent(0.7).cgColor
+        layer.borderWidth = 1
+        layer.cornerRadius = 3
+        isAccessibilityElement = true
+        accessibilityIdentifier = "ink-text-editor"
+        accessibilityLabel = "Text on the page"
+
+        let bar = UIToolbar()
+        let delete = UIBarButtonItem(title: "Delete", image: UIImage(systemName: "trash"),
+                                     primaryAction: UIAction { [weak self] _ in self?.onDelete() })
+        delete.tintColor = .systemRed
+        let done = UIBarButtonItem(systemItem: .done, primaryAction: UIAction { [weak self] _ in self?.onDone() })
+        done.title = "Done"
+        bar.items = [delete, .flexibleSpace(), done]
+        bar.sizeToFit()
+        inputAccessoryView = bar
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    /// The caret only as tall as the type. Each line is a whole ruled line tall with the letters at its
+    /// foot (as the page draws them), so the default caret, the full line, would reach up into the line above.
+    override func caretRect(for position: UITextPosition) -> CGRect {
+        var rect = super.caretRect(for: position)
+        guard let font = typingAttributes[.font] as? UIFont, rect.height > font.lineHeight + 1 else { return rect }
+        rect.origin.y = rect.maxY - font.lineHeight
+        rect.size.height = font.lineHeight
+        return rect
+    }
+
+    /// Sets the font and line spacing for `zoom` canvas points per page point.
+    func apply(zoom: CGFloat) {
+        guard abs(zoom - appliedZoom) > 0.001 else { return }
+        appliedZoom = zoom
+        let style = NSMutableParagraphStyle()
+        style.minimumLineHeight = InkText.lineHeight * zoom
+        style.maximumLineHeight = InkText.lineHeight * zoom
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: UIFont.systemFont(ofSize: InkText.fontSize * zoom),
+            .paragraphStyle: style,
+            .foregroundColor: UIColor.label,
+        ]
+        let selection = selectedRange
+        textStorage.setAttributes(attributes, range: NSRange(location: 0, length: textStorage.length))
+        typingAttributes = attributes
+        selectedRange = selection
+    }
+}
+
 /// Ruled or squared paper behind the transparent canvas. Lines are a handful of reused layers
 /// positioned from the canvas's scroll offset and zoom, so they track the ink exactly and cost nothing.
 final class PaperLinesView: UIView {
@@ -933,6 +1330,21 @@ final class PaperLinesView: UIView {
         }
         pool[index].isHidden = false
         return pool[index]
+    }
+}
+
+private extension UIResponder {
+    private static weak var foundFirstResponder: UIResponder?
+
+    /// The app's current first responder, if any.
+    static var currentFirstResponder: UIResponder? {
+        foundFirstResponder = nil
+        UIApplication.shared.sendAction(#selector(reportFirstResponder), to: nil, from: nil, for: nil)
+        return foundFirstResponder
+    }
+
+    @objc private func reportFirstResponder() {
+        UIResponder.foundFirstResponder = self
     }
 }
 #endif
