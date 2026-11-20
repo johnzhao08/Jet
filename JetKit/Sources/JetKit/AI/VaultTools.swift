@@ -46,12 +46,12 @@ public struct VaultTools {
              "List the notes and folders in the Jet vault (or in one folder of it). Markdown notes end in .md; handwritten notes end in .ink and are drawn with Apple Pencil on iPad. PDFs (which may have handwritten annotations) and other files are listed too.",
              ["folder": ["type": "string", "description": "Folder path relative to the vault root. Omit for the whole vault."]]),
         tool("read_note",
-             "Read a note. Markdown and other text files come back as text. Handwritten (.ink) notes come back as images of their pages: read the handwriting and drawings from the images. PDFs come back as their text plus images of their pages, including any handwriting on them. Long handwritten notes and PDFs are split into pages; ask for later pages with `page`. A note can be given by path (\"Projects/Jet.md\") or just its title (\"Jet\").",
+             "Read a note. Markdown and other text files come back as text. Handwritten (.ink) notes come back as images of their pages (read the handwriting and drawings from the images), plus any typed text on them. PDFs come back as their text plus images of their pages, including any handwriting on them. Long handwritten notes and PDFs are split into pages; ask for later pages with `page`. A note can be given by path (\"Projects/Jet.md\") or just its title (\"Jet\").",
              ["path": ["type": "string", "description": "Note path relative to the vault root, or the note's title."],
               "page": ["type": "integer", "description": "Handwritten notes and PDFs only: the first page to return (1-based). Default 1."]],
              required: ["path"]),
         tool("search_notes",
-             "Search note titles, Markdown and recognized handwriting. Combine text, quoted phrases, /regex/, path:, tag:, [property:value] and task-todo: filters. #project also includes nested tags.",
+             "Search note titles, Markdown, typed text in handwritten notes and recognized handwriting. Combine text, quoted phrases, /regex/, path:, tag:, [property:value] and task-todo: filters. #project also includes nested tags.",
              ["query": ["type": "string"]], required: ["query"]),
         tool("note_links",
              "Show how a note connects to the rest of the vault: the notes it links to with [[wikilinks]], the notes that link to it (backlinks), its #tags and its aliases.",
@@ -269,8 +269,9 @@ public struct VaultTools {
         guard let document = InkDocument.decode(data) else { throw Failure("Couldn't read handwritten note “\(relative)”.") }
         let drawing = document.pkDrawing
         let images = document.images ?? []
+        let texts = (document.texts ?? []).sorted { ($0.y, $0.x) < ($1.y, $1.x) }
         let bounds = document.contentBounds
-        guard !bounds.isNull, !drawing.strokes.isEmpty || !images.isEmpty else {
+        guard !bounds.isNull, !drawing.strokes.isEmpty || !images.isEmpty || !texts.isEmpty else {
             return .text("Handwritten note “\(relative)” is empty.")
         }
         let pageCount = max(1, Int((bounds.maxY / Self.inkPageHeight).rounded(.up)))
@@ -284,12 +285,17 @@ public struct VaultTools {
         result.addText(note)
         for index in (firstPage - 1)..<last {
             let rect = CGRect(x: 0, y: CGFloat(index) * Self.inkPageHeight, width: InkDocument.pageWidth, height: Self.inkPageHeight)
+            let typed = texts.filter { $0.frame.intersects(rect) }
             guard drawing.strokes.contains(where: { $0.renderBounds.intersects(rect) })
-                    || images.contains(where: { $0.frame.intersects(rect) }) else {
+                    || images.contains(where: { $0.frame.intersects(rect) }) || !typed.isEmpty else {
                 result.addText("Page \(index + 1) is blank.")
                 continue
             }
-            if let png = InkSnapshot.png(drawing, images: images, root: root, rect: rect, pixelWidth: 1200) {
+            if !typed.isEmpty {
+                // Typed text exactly as written; it also shows in the page image, where it sits among the handwriting.
+                result.addText("Typed text on page \(index + 1):\n" + typed.map(\.text).joined(separator: "\n\n"))
+            }
+            if let png = InkSnapshot.png(drawing, images: images, texts: typed, root: root, rect: rect, pixelWidth: 1200) {
                 if last > firstPage { result.addText("Page \(index + 1):") }
                 result.addPNG(png)
             }
@@ -451,12 +457,13 @@ public struct VaultTools {
 
 /// Renders handwriting as a PNG on white paper, in light-mode ink colours.
 enum InkSnapshot {
-    static func png(_ drawing: PKDrawing, images: [InkImage] = [], root: URL? = nil, rect: CGRect, pixelWidth: CGFloat) -> Data? {
+    static func png(_ drawing: PKDrawing, images: [InkImage] = [], texts: [InkText] = [], root: URL? = nil, rect: CGRect,
+                    pixelWidth: CGFloat) -> Data? {
         let scale = pixelWidth / rect.width
-        if let root, images.contains(where: { $0.frame.intersects(rect) }) {
+        if let root, images.contains(where: { $0.frame.intersects(rect) }) || texts.contains(where: { $0.frame.intersects(rect) }) {
             var output: CGImage?
             (NSAppearance(named: .aqua) ?? NSAppearance.currentDrawing()).performAsCurrentDrawingAppearance {
-                output = InkRenderer.compose(drawing, images: images, root: root, rect: rect, scale: scale, dark: false,
+                output = InkRenderer.compose(drawing, images: images, texts: texts, root: root, rect: rect, scale: scale, dark: false,
                                              background: CGColor(gray: 1, alpha: 1))
             }
             return output.flatMap { NSBitmapImageRep(cgImage: $0).representation(using: .png, properties: [:]) }

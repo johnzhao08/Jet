@@ -126,7 +126,8 @@ final class VaultIndexFiles {
                   bounds.maxY >= 0, bounds.maxY < CGFloat(Int.max) else { continue }
             for page in max(0, Int(floor(bounds.minY / pageHeight)))...Int(bounds.maxY / pageHeight) { pages.insert(page) }
         }
-        var lines: [String] = []
+        // Typed text is indexed exactly as written (it isn't rendered for recognition, so it isn't found twice).
+        var lines: [String] = (doc.texts ?? []).sorted { ($0.y, $0.x) < ($1.y, $1.x) }.map(\.text)
         for page in pages.sorted() {
             let result: [String]? = autoreleasepool {
                 let rect = CGRect(x: 0, y: CGFloat(page) * pageHeight, width: InkDocument.pageWidth, height: pageHeight)

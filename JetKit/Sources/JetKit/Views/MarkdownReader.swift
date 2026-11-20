@@ -213,7 +213,7 @@ struct MarkdownReader: ReaderRepresentable {
                 let bounds = ink.contentBounds.insetBy(dx: -16, dy: -16)
                 guard !bounds.isNull, bounds.width > 1, bounds.height > 1 else { return ["path": path] }
                 let scale = min(2, 1300 / max(bounds.width, bounds.height))
-                guard let image = InkRenderer.compose(ink.pkDrawing, images: ink.images ?? [], root: session.root, rect: bounds,
+                guard let image = InkRenderer.compose(ink.pkDrawing, images: ink.images ?? [], texts: ink.texts ?? [], root: session.root, rect: bounds,
                                                       scale: scale, dark: false, background: CGColor(gray: 1, alpha: 1)) else { return nil }
                 #if os(macOS)
                 let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])
