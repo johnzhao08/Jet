@@ -284,7 +284,7 @@ public struct VaultTools {
         if last < pageCount { note += " Call read_note with page \(last + 1) for the rest." }
         result.addText(note)
         for index in (firstPage - 1)..<last {
-            let rect = CGRect(x: 0, y: CGFloat(index) * Self.inkPageHeight, width: InkDocument.pageWidth, height: Self.inkPageHeight)
+            let rect = CGRect(x: 0, y: CGFloat(index) * Self.inkPageHeight, width: max(InkDocument.pageWidth, bounds.maxX), height: Self.inkPageHeight)
             let typed = texts.filter { $0.frame.intersects(rect) }
             guard drawing.strokes.contains(where: { $0.renderBounds.intersects(rect) })
                     || images.contains(where: { $0.frame.intersects(rect) }) || !typed.isEmpty else {

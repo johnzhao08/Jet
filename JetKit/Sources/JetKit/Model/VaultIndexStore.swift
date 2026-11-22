@@ -130,7 +130,8 @@ final class VaultIndexFiles {
         var lines: [String] = (doc.texts ?? []).sorted { ($0.y, $0.x) < ($1.y, $1.x) }.map(\.text)
         for page in pages.sorted() {
             let result: [String]? = autoreleasepool {
-                let rect = CGRect(x: 0, y: CGFloat(page) * pageHeight, width: InkDocument.pageWidth, height: pageHeight)
+                let rect = CGRect(x: 0, y: CGFloat(page) * pageHeight, width: max(InkDocument.pageWidth, drawing.bounds.maxX),
+                                  height: pageHeight)
                 guard let image = InkRenderer.compose(drawing, images: [], root: url.deletingLastPathComponent(),
                     rect: rect, scale: 1.5, dark: false, background: CGColor(gray: 1, alpha: 1)) else { return nil }
                 let request = VNRecognizeTextRequest()

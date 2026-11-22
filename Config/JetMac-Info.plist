@@ -5,6 +5,14 @@
      place; others are copied into the open vault. -->
 <plist version="1.0">
 <dict>
+	<key>JetUpdaterEnabled</key>
+	<string>$(JET_UPDATER_ENABLED)</string>
+	<key>SUFeedURL</key>
+	<string>https://github.com/johnzhao08/Jet-Mac-Releases/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>WiJlzv/YRYqGV1W8pzAJCDU6kjE4NzaKn2aim8S7dkw=</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>

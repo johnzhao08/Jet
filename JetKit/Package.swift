@@ -12,12 +12,17 @@ let package = Package(
     dependencies: [
         // libgit2 built from source: works on iPadOS (no git binary there) and macOS alike.
         .package(url: "https://github.com/ibrahimcetin/libgit2.git", exact: "1.9.2"),
+        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.10.1"),
     ],
     targets: [
         .target(name: "JetCapture"),
         .target(
             name: "JetKit",
-            dependencies: ["JetCapture", .product(name: "libgit2", package: "libgit2")],
+            dependencies: [
+                "JetCapture",
+                .product(name: "libgit2", package: "libgit2"),
+                .product(name: "Sparkle", package: "Sparkle", condition: .when(platforms: [.macOS])),
+            ],
             resources: [.copy("MarkdownReader")]
         ),
         .testTarget(name: "JetCaptureTests", dependencies: ["JetKit", "JetCapture"]),

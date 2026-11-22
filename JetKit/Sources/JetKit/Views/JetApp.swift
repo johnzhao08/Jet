@@ -1,13 +1,28 @@
 import SwiftUI
+#if os(macOS)
+import Sparkle
+#endif
 
 /// The whole app. The executable targets just call `JetApp.main()`.
 public struct JetApp: App {
     #if os(macOS)
     @NSApplicationDelegateAdaptor(JetAppDelegate.self) private var appDelegate
+    private let updaterController: SPUStandardUpdaterController?
     #endif
     @State private var model = AppModel()
 
-    public init() {}
+    public init() {
+        #if os(macOS)
+        let info = Bundle.main.infoDictionary ?? [:]
+        if info["JetUpdaterEnabled"] as? String == "YES",
+           let feed = info["SUFeedURL"] as? String, feed.hasPrefix("https://"),
+           let key = info["SUPublicEDKey"] as? String, !key.isEmpty {
+            updaterController = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
+        } else {
+            updaterController = nil
+        }
+        #endif
+    }
 
     public var body: some Scene {
         WindowGroup("Jet") {
@@ -18,6 +33,11 @@ public struct JetApp: App {
         #if os(macOS)
         .defaultSize(width: 1180, height: 760)
         .commands {
+            if let updaterController {
+                CommandGroup(after: .appInfo) {
+                    CheckForUpdatesView(updater: updaterController.updater)
+                }
+            }
             CommandMenu("Navigate") {
                 Button("Command palette…") { model.session?.showCommandPalette = true }
                     .keyboardShortcut("k", modifiers: .command)
