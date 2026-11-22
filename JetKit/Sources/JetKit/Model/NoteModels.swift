@@ -36,6 +36,14 @@ public final class InkNoteModel {
     public var penSwatch: InkSwatch = .black
     public var highlighterSwatch: InkSwatch = .yellow
     public var thickness: InkThickness = .medium
+    /// Page zoom, in view points per page point (0 until the page first lays out). Not saved: it is how
+    /// this window shows the page. Change it with `setZoom(_:)`, `zoomIn()`, `zoomOut()` or `zoomToFit()`.
+    public internal(set) var zoom: CGFloat = 0
+    /// The zoom at which the page's width just fills the view, as the view last laid it out.
+    public internal(set) var fitZoom: CGFloat = 0
+    /// Whether `zoom` was chosen with the whole page width in view. Then a narrower view zooms out to keep
+    /// it in view, and a wider one goes back to `zoom`; otherwise the zoom stays and the page scrolls sideways.
+    var zoomFitsWidth = true
     /// Whether there is something to undo or redo, for the toolbar. The canvas owns them.
     public var canUndo = false
     public var canRedo = false

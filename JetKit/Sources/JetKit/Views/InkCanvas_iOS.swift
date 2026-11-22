@@ -24,6 +24,8 @@ struct InkCanvasRepresentable: UIViewControllerRepresentable {
     let paper: PaperStyle
     let showsToolPicker: Bool
     let tools: [InkPickerTool]
+    /// The page zoom (`InkNoteModel.currentZoom`), which the magnifier menu changes.
+    var zoom: CGFloat = 0
 
     func makeUIViewController(context: Context) -> InkCanvasController {
         InkCanvasController(model: model, root: root, tools: tools, pdf: pdf)
@@ -31,6 +33,7 @@ struct InkCanvasRepresentable: UIViewControllerRepresentable {
 
     func updateUIViewController(_ controller: InkCanvasController, context: Context) {
         controller.apply(generation: generation, paper: paper, showsToolPicker: showsToolPicker, tools: tools)
+        controller.apply(zoom: zoom)
     }
 }
 
@@ -90,8 +93,10 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
     private var paper = PaperStyle.lined
     private var pickerWanted = true
     private var laidOutWidth: CGFloat = 0
-    /// Page height in page points (the page is `InkDocument.pageWidth` wide). Only ever grows while open.
+    /// Page height in page points. Only ever grows while open.
     private var pageHeight: CGFloat = 0
+    /// Page width in page points: at least `InkDocument.pageWidth`, wider when the view shows more than that.
+    private var pageWidth: CGFloat = InkDocument.pageWidth
 
     init(model: InkNoteModel, root: URL, tools: [InkPickerTool], pdf: PDFPages? = nil) {
         self.model = model
@@ -251,21 +256,52 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
         let width = canvas.bounds.width
         guard width > 0 else { return }
         if abs(width - laidOutWidth) > 0.5 {
-            // First layout, rotation or split-view resize: fit the page to the new width and stay at
-            // the same place on the page.
+            // First layout, rotation, sidebar or split-view resize: keep the zoom (see `InkNoteModel.zoom(fitting:)`;
+            // the plain page extends sideways into a wider view) and stay at the same place on the page.
             let pageY = laidOutWidth > 0 ? max(0, canvas.contentOffset.y) / max(canvas.zoomScale, 0.01) : 0
             laidOutWidth = width
             let fit = width / InkDocument.pageWidth
-            canvas.minimumZoomScale = fit
-            canvas.maximumZoomScale = fit * 4
-            canvas.zoomScale = fit
+            model.viewFits(fit)
+            // Pinching out past the page's width shows more of a plain page; a PDF's pages stop at the width.
+            canvas.minimumZoomScale = pdf == nil ? InkNoteModel.zoomLimits.lowerBound : fit
+            canvas.maximumZoomScale = InkNoteModel.zoomLimits.upperBound
+            let zoom = min(max(model.zoom(fitting: fit), canvas.minimumZoomScale), canvas.maximumZoomScale)
+            canvas.zoomScale = zoom
             updateContentSize()
-            canvas.contentOffset = CGPoint(x: 0, y: pageY > 0 ? pageY * fit : -canvas.adjustedContentInset.top)
+            canvas.contentOffset = CGPoint(x: 0, y: pageY > 0 ? pageY * zoom : -canvas.adjustedContentInset.top)
         }
         updatePaper()
     }
 
     // MARK: State from SwiftUI
+
+    /// Zooms to `zoom` from the magnifier menu (or a wider or narrower view), keeping the middle of the
+    /// view on the same place on the page. Ignored mid-pinch, which sets the zoom itself when it ends.
+    func apply(zoom: CGFloat) {
+        guard laidOutWidth > 0, zoom > 0, !canvas.isZooming, !canvas.isZoomBouncing else { return }
+        let target = min(max(zoom, canvas.minimumZoomScale), canvas.maximumZoomScale)
+        let old = max(canvas.zoomScale, 0.01)
+        guard abs(target - old) > 0.001 else {
+            // Out of this canvas's range (a PDF can't be smaller than its width): show what it really is.
+            if abs(target - zoom) > 0.001 { DispatchQueue.main.async { self.model.setZoom(target) } }
+            return
+        }
+        let size = canvas.bounds.size
+        let inset = canvas.adjustedContentInset
+        let center = CGPoint(x: (canvas.contentOffset.x + size.width / 2) / old,
+                             y: (canvas.contentOffset.y + size.height / 2) / old)
+        canvas.zoomScale = target
+        updateContentSize()
+        layoutTextEditor()
+        let content = canvas.contentSize
+        let maxX = max(content.width - size.width + inset.right, -inset.left)
+        let maxY = max(content.height - size.height + inset.bottom, -inset.top)
+        canvas.contentOffset = CGPoint(x: min(max(center.x * target - size.width / 2, -inset.left), maxX),
+                                       y: min(max(center.y * target - size.height / 2, -inset.top), maxY))
+        updatePaper()
+        updateImageOverlay()
+        if abs(target - zoom) > 0.001 { DispatchQueue.main.async { self.model.setZoom(target) } }
+    }
 
     func apply(generation: Int, paper: PaperStyle, showsToolPicker: Bool, tools: [InkPickerTool]) {
         loadViewIfNeeded()
@@ -1008,11 +1044,15 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
             // Always leave most of a screen of fresh paper below the last stroke.
             pageHeight = max(pageHeight, inkBottom + 900, canvas.bounds.height / max(zoom, 0.01) + 300)
         }
-        let size = CGSize(width: InkDocument.pageWidth * zoom, height: pageHeight * zoom)
+        // As wide as the view at this zoom (the plain page extends sideways into it), and wide enough for
+        // whatever is already there.
+        let visibleWidth = pdf == nil ? canvas.bounds.width / max(zoom, 0.01) : 0
+        pageWidth = max(InkDocument.pageWidth, visibleWidth, bounds.isNull || pdf != nil ? 0 : bounds.maxX)
+        let size = CGSize(width: pageWidth * zoom, height: pageHeight * zoom)
         if abs(canvas.contentSize.width - size.width) > 0.5 || abs(canvas.contentSize.height - size.height) > 0.5 {
             canvas.contentSize = size
         }
-        pageContent.layout(pageSize: CGSize(width: InkDocument.pageWidth, height: pageHeight), zoom: zoom)
+        pageContent.layout(pageSize: CGSize(width: pageWidth, height: pageHeight), zoom: zoom)
     }
 
     private func updatePaper() {
@@ -1036,7 +1076,7 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
     }
 
     func scrollViewDidZoom(_ scrollView: UIScrollView) {
-        pageContent.layout(pageSize: CGSize(width: InkDocument.pageWidth, height: pageHeight), zoom: canvas.zoomScale)
+        pageContent.layout(pageSize: CGSize(width: pageWidth, height: pageHeight), zoom: canvas.zoomScale)
         layoutTextEditor(settled: false)
         updatePaper()
         updateImageOverlay()
@@ -1049,6 +1089,7 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
     }
 
     func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
+        model.setZoom(scale)
         layoutTextEditor()
         updateContentSize()
         updatePaper()

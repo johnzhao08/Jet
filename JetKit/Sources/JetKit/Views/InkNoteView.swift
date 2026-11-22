@@ -71,6 +71,9 @@ struct InkNoteView: View {
                 InkSurfaceToolbar(model: model, allowsText: pdf == nil)
                 #endif
                 ToolbarItem(placement: .primaryAction) {
+                    InkZoomMenu(model: model)
+                }
+                ToolbarItem(placement: .primaryAction) {
                     Menu {
                         if let pdf {
                             ShareLink(item: AnnotatedPDF(pages: pdf, notes: model.url, root: session.root,
@@ -127,7 +130,8 @@ struct InkNoteView: View {
             paper: model.paper,
             // The floating tool picker would sit on top of sheets, so it steps aside while one is up.
             showsToolPicker: model.showsToolPicker && imageSource == nil && !showTools,
-            tools: InkPickerTool.decode(storedTools)
+            tools: InkPickerTool.decode(storedTools),
+            zoom: model.currentZoom
         )
         .ignoresSafeArea(.container, edges: .bottom)
         #else
@@ -312,19 +316,32 @@ struct InkPagesView: View {
     @Environment(\.colorScheme) private var colorScheme
     private let tile = InkDocument.pageWidth
 
+    private var zoomModel: InkNoteModel? {
+        #if os(macOS)
+        writer
+        #else
+        nil
+        #endif
+    }
+
     var body: some View {
         GeometryReader { geometry in
-            let scale = max(geometry.size.width / InkDocument.pageWidth, 0.01)
+            let fit = max(geometry.size.width / InkDocument.pageWidth, 0.01)
+            // The note's zoom (see `InkNoteModel.zoom(fitting:)`): a wider window keeps it and shows more page.
+            let scale = zoomModel?.zoom(fitting: fit) ?? fit
             let content = texts.reduce(images.reduce(drawing.bounds) { $0.union($1.frame) }) { $0.union($1.frame) }
             let bottom = max(content.isNull ? 0 : content.maxY, editorBottom ?? 0)
             let inkBottom = bottom > 0 ? bottom + 200 : 0
             let pageHeight = max(inkBottom, geometry.size.height / scale)
             let count = max(1, Int((pageHeight / tile).rounded(.up)))
-            ScrollView {
+            // The page extends sideways to fill the window, and to whatever is already written there.
+            let pageWidth = max(InkDocument.pageWidth, geometry.size.width / scale, content.isNull ? 0 : content.maxX)
+            let width = pageWidth * scale
+            ScrollView(width > geometry.size.width + 0.5 ? [.vertical, .horizontal] : .vertical) {
                 ZStack(alignment: .topLeading) {
                     LazyVStack(spacing: 0) {
                         ForEach(0..<count, id: \.self) { index in
-                            let rect = CGRect(x: 0, y: CGFloat(index) * tile, width: tile, height: tile)
+                            let rect = CGRect(x: 0, y: CGFloat(index) * tile, width: pageWidth, height: tile)
                             InkTile(
                                 drawing: drawing,
                                 images: images,
@@ -337,21 +354,23 @@ struct InkPagesView: View {
                                 textKey: InkRenderer.signature(of: texts, in: rect)
                             )
                             .background(PaperLines(paper: paper, spacing: InkDocument.lineSpacing * scale))
-                            .frame(width: geometry.size.width, height: tile * scale)
+                            .frame(width: width, height: tile * scale)
                         }
                     }
                     #if os(macOS)
                     if let writer {
                         InkSurface(writer: writer, scale: scale, origin: .zero, dark: colorScheme == .dark)
-                            .frame(width: geometry.size.width, height: CGFloat(count) * tile * scale)
+                            .frame(width: width, height: CGFloat(count) * tile * scale)
                     }
                     #endif
                 }
                 #if os(macOS)
                 .modifier(PictureDropTarget(session: session, place: place, origin: .zero, scale: scale,
-                                            bounds: { _ in CGRect(x: 0, y: 0, width: tile, height: .infinity) }))
+                                            bounds: { _ in CGRect(x: 0, y: 0, width: pageWidth, height: .infinity) }))
                 #endif
             }
+            .onAppear { if geometry.size.width > 0 { zoomModel?.viewFits(fit) } }
+            .onChange(of: fit) { _, fit in zoomModel?.viewFits(fit) }
         }
     }
 }
@@ -445,10 +464,20 @@ struct PDFPagesView: View {
 
     @Environment(\.colorScheme) private var colorScheme
 
+    private var zoomModel: InkNoteModel? {
+        #if os(macOS)
+        writer
+        #else
+        nil
+        #endif
+    }
+
     var body: some View {
         GeometryReader { geometry in
-            let scale = max((geometry.size.width - 32) / InkDocument.pageWidth, 0.01)
-            ScrollView {
+            let fit = max((geometry.size.width - 32) / InkDocument.pageWidth, 0.01)
+            let scale = zoomModel?.zoom(fitting: fit) ?? fit
+            let wide = InkDocument.pageWidth * scale + 32 > geometry.size.width + 0.5
+            ScrollView(wide ? [.vertical, .horizontal] : .vertical) {
                 ZStack(alignment: .topLeading) {
                     LazyVStack(spacing: PDFPages.gap * scale) {
                         ForEach(pages.frames.indices, id: \.self) { index in
@@ -476,9 +505,12 @@ struct PDFPagesView: View {
                 }))
                 #endif
                 .padding(.vertical, PDFPages.gap * scale)
-                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 16)
+                .frame(minWidth: geometry.size.width)
             }
             .background(Color.gray.opacity(0.18))
+            .onAppear { if geometry.size.width > 0 { zoomModel?.viewFits(fit) } }
+            .onChange(of: fit) { _, fit in zoomModel?.viewFits(fit) }
         }
     }
 }
