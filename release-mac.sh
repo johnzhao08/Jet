@@ -35,8 +35,24 @@ xcodebuild -project Jet.xcodeproj -scheme JetMac -configuration Release \
     > build.noindex/mac-archive.log 2>&1 || { tail -30 build.noindex/mac-archive.log; exit 1; }
 
 APP="$ARCHIVE/Products/Applications/Jet.app"
+SPARKLE="$APP/Contents/Frameworks/Sparkle.framework"
+SPARKLE_VERSION="$SPARKLE/Versions/B"
+codesign --force --sign "$IDENTITY" --options runtime --timestamp "$SPARKLE_VERSION/XPCServices/Installer.xpc"
+codesign --force --sign "$IDENTITY" --options runtime --timestamp --preserve-metadata=entitlements \
+    "$SPARKLE_VERSION/XPCServices/Downloader.xpc"
+codesign --force --sign "$IDENTITY" --options runtime --timestamp "$SPARKLE_VERSION/Autoupdate"
+codesign --force --sign "$IDENTITY" --options runtime --timestamp "$SPARKLE_VERSION/Updater.app"
+codesign --force --sign "$IDENTITY" --options runtime --timestamp "$SPARKLE"
+codesign --force --sign "$IDENTITY" --options runtime --timestamp --preserve-metadata=entitlements "$APP"
+codesign --verify --deep --strict "$APP"
 ditto -c -k --sequesterRsrc --keepParent "$APP" "$OUTPUT/Jet.zip"
-xcrun notarytool submit "$OUTPUT/Jet.zip" --keychain-profile "$NOTARY_PROFILE" --wait
+NOTARY_RESULT=$(xcrun notarytool submit "$OUTPUT/Jet.zip" --keychain-profile "$NOTARY_PROFILE" --wait --output-format json)
+printf '%s\n' "$NOTARY_RESULT"
+NOTARY_STATUS=$(printf '%s' "$NOTARY_RESULT" | python3 -c 'import json, sys; print(json.load(sys.stdin)["status"])')
+if [ "$NOTARY_STATUS" != Accepted ]; then
+    echo "Apple notarization returned $NOTARY_STATUS; not publishing." >&2
+    exit 1
+fi
 xcrun stapler staple "$APP"
 rm -f "$OUTPUT/Jet.zip"
 ditto -c -k --sequesterRsrc --keepParent "$APP" "$OUTPUT/Jet.zip"
