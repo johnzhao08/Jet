@@ -297,12 +297,21 @@ final class InkSurfaceView: NSView, NSTextViewDelegate {
         if visibleRect.contains(mouse) { cursor.set() }
     }
 
+    // MARK: Trackpad zoom
+
+    /// Pinching on the trackpad zooms the page, like the magnifier menu.
+    override func magnify(with event: NSEvent) {
+        model.setZoom(model.currentZoom * (1 + event.magnification))
+    }
+
     // MARK: Pointer to page
 
     /// The pointer reading for `event`, in page points.
     private func sample(from event: NSEvent) -> InkSample {
         let local = convert(event.locationInWindow, from: nil)
-        let location = CGPoint(x: min(max(origin.x + local.x / scale, 0), InkDocument.pageWidth),
+        // Up to the right edge of the surface, which spans the page however wide the window shows it.
+        let right = origin.x + max(bounds.width / scale, InkDocument.pageWidth)
+        let location = CGPoint(x: min(max(origin.x + local.x / scale, 0), right),
                                y: max(origin.y + local.y / scale, 0))
         var force: CGFloat?
         var azimuth: CGFloat = 0
