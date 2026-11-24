@@ -71,14 +71,16 @@ public final class PDFPages: @unchecked Sendable {
         return rotation == 90 || rotation == 270 ? CGSize(width: box.height, height: box.width) : box.size
     }
 
-    /// Draws `page` to fill `rect` in a context with y pointing up (Core Graphics' own orientation).
+    /// Fits `page` at the top left of `rect` in a context with y pointing up.
     public static func draw(_ page: CGPDFPage, in context: CGContext, rect: CGRect) {
         let box = page.getBoxRect(.cropBox)
         let rotation = ((page.rotationAngle % 360) + 360) % 360
         let size = displaySize(of: page)
+        guard size.width > 0, size.height > 0 else { return }
+        let scale = min(rect.width / size.width, rect.height / size.height)
         context.saveGState()
-        context.translateBy(x: rect.minX, y: rect.minY)
-        context.scaleBy(x: rect.width / max(size.width, 1), y: rect.height / max(size.height, 1))
+        context.translateBy(x: rect.minX, y: rect.maxY - size.height * scale)
+        context.scaleBy(x: scale, y: scale)
         switch rotation {
         case 90:
             context.translateBy(x: 0, y: box.width)
@@ -104,7 +106,9 @@ public final class PDFPages: @unchecked Sendable {
     public func render(_ index: Int, drawing: PKDrawing, images: [InkImage], root: URL, scale: CGFloat) -> CGImage? {
         guard frames.indices.contains(index), let page = page(index) else { return nil }
         let frame = frames[index]
-        let width = max(1, Int((frame.width * scale).rounded())), height = max(1, Int((frame.height * scale).rounded()))
+        let width = max(1, Int((frame.width * scale).rounded()))
+        let pixelScale = CGFloat(width) / frame.width
+        let height = max(1, Int((frame.height * pixelScale).rounded(.up)))
         guard let space = CGColorSpace(name: CGColorSpace.sRGB),
               let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
                                       space: space, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)
@@ -114,8 +118,8 @@ public final class PDFPages: @unchecked Sendable {
         context.fill(full)
         Self.draw(page, in: context, rect: full)
         if hasAnnotations(on: index, drawing: drawing, images: images),
-           let overlay = InkRenderer.compose(drawing, images: images, root: root, rect: frame, scale: scale, dark: false) {
-            context.draw(overlay, in: full)
+           let overlay = InkRenderer.compose(drawing, images: images, root: root, rect: frame, scale: pixelScale, dark: false) {
+            context.draw(overlay, in: CGRect(x: 0, y: height - overlay.height, width: overlay.width, height: overlay.height))
         }
         return context.makeImage()
     }
@@ -139,7 +143,13 @@ public final class PDFPages: @unchecked Sendable {
                 // About 300 dpi on a letter-sized page.
                 let scale = 2560 / InkDocument.pageWidth
                 if let overlay = InkRenderer.compose(drawing, images: images, root: root, rect: frames[index], scale: scale, dark: false) {
-                    context.draw(overlay, in: box)
+                    let pointsPerPixel = box.width / (InkDocument.pageWidth * scale)
+                    let height = CGFloat(overlay.height) * pointsPerPixel
+                    context.saveGState()
+                    context.clip(to: box)
+                    context.draw(overlay, in: CGRect(x: box.minX, y: box.maxY - height,
+                                                     width: CGFloat(overlay.width) * pointsPerPixel, height: height))
+                    context.restoreGState()
                 }
             }
             context.endPage()
