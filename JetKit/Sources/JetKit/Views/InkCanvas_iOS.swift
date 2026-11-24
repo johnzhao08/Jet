@@ -748,7 +748,7 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
         let before = pageState
         setImages(images + [image])
         registerUndo(from: before, to: pageState, name: "Insert Picture")
-        selectImage(image.id)
+        selectImage(mode == .pan ? nil : image.id)
     }
 
     private func selectImage(_ id: String?) {
