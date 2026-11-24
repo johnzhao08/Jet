@@ -12,6 +12,9 @@ import PencilKit
 ///   `InkNoteModel` the way the iPad canvas hands over its drawing, so both save the same file.
 /// - While the pointer is down the stroke is previewed here; once it is saved the page redraws it.
 /// - Scroll wheel and trackpad scrolling are not handled here, so they reach the page's scroll view.
+/// - The Hand tool, or a drag with the right mouse button whatever the tool, moves the page around by
+///   scrolling that same scroll view, so zoom and scroll limits stay its own and nothing on the page
+///   changes. A right-click that doesn't move still opens the context menu.
 /// - With the Add Text tool, a click opens a text editor (an `NSTextView`) on the page at that spot,
 ///   or on the typed text clicked; dragging typed text moves it. Right-clicking typed text with any
 ///   tool offers Edit Text and Delete Text. The page draws committed text; the editor shows the text
@@ -96,6 +99,11 @@ final class InkSurfaceView: NSView, NSTextViewDelegate {
     /// Typed text being pressed on with Add Text: the text, where the press began, the page's texts
     /// then, and whether it has been dragged (a press without a drag edits it instead).
     private var textDrag: (text: InkText, start: CGPoint, before: [InkText], moved: Bool)?
+    /// A drag moving the page around: where it began (window coordinates) and the page's scroll
+    /// position then (its clip view's bounds origin).
+    private var pan: (start: NSPoint, origin: NSPoint)?
+    /// A right-button press that hasn't moved yet: moving makes it a pan, releasing it in place a right-click.
+    private var rightDown: NSEvent?
 
     init(model: InkNoteModel) {
         self.model = model
@@ -266,7 +274,8 @@ final class InkSurfaceView: NSView, NSTextViewDelegate {
                                        owner: self, userInfo: nil))
     }
 
-    private var effectiveTool: InkSurfaceTool { tabletEraser ? .eraser : tool }
+    /// The tool a press uses. The Hand stays the Hand even with a tablet's eraser end near, so it never changes the page.
+    private var effectiveTool: InkSurfaceTool { tool == .hand ? .hand : (tabletEraser ? .eraser : tool) }
 
     private static let eraserCursor: NSCursor = {
         let radius = InkEraser.screenRadius
@@ -285,9 +294,11 @@ final class InkSurfaceView: NSView, NSTextViewDelegate {
     }()
 
     private var cursor: NSCursor {
-        switch effectiveTool {
+        if pan != nil { return .closedHand }
+        return switch effectiveTool {
         case .eraser: Self.eraserCursor
         case .text: .iBeam
+        case .hand: .openHand
         default: .crosshair
         }
     }
@@ -307,6 +318,61 @@ final class InkSurfaceView: NSView, NSTextViewDelegate {
     /// Pinching on the trackpad zooms the page, like the magnifier menu.
     override func magnify(with event: NSEvent) {
         model.setZoom(model.currentZoom * (1 + event.magnification))
+    }
+
+    // MARK: Moving the page around
+
+    /// Starts moving the page from window point `start`, if it is in a scroll view.
+    private func beginPan(at start: NSPoint) {
+        guard let clip = enclosingScrollView?.contentView else { return }
+        pan = (start, clip.bounds.origin)
+        refreshCursor()
+    }
+
+    /// Scrolls so the page point that was under the pointer when the pan began is under it again, as far
+    /// as the page reaches (sideways only where it is wider than the window).
+    private func continuePan(_ event: NSEvent) {
+        guard let pan, let scrollView = enclosingScrollView else { return }
+        let clip = scrollView.contentView
+        // Both converted with the clip view as it is now, so its current scroll position cancels out.
+        let from = clip.convert(pan.start, from: nil), to = clip.convert(event.locationInWindow, from: nil)
+        var proposed = clip.bounds
+        proposed.origin = NSPoint(x: pan.origin.x - (to.x - from.x), y: pan.origin.y - (to.y - from.y))
+        let origin = clip.constrainBoundsRect(proposed).origin
+        guard origin != clip.bounds.origin else { return }
+        clip.scroll(to: origin)
+        scrollView.reflectScrolledClipView(clip)
+    }
+
+    private func endPan() {
+        guard pan != nil else { return }
+        pan = nil
+        refreshCursor()
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        // Held until it moves (a pan) or is released in place (the context menu, see `rightMouseUp`).
+        rightDown = event
+    }
+
+    override func rightMouseDragged(with event: NSEvent) {
+        if let down = rightDown {
+            let start = down.locationInWindow, now = event.locationInWindow
+            guard hypot(now.x - start.x, now.y - start.y) >= 3 else { return }
+            rightDown = nil
+            beginPan(at: start)
+        }
+        continuePan(event)
+    }
+
+    override func rightMouseUp(with event: NSEvent) {
+        if let down = rightDown {
+            // A right-click without a drag: the context menu, as the press would have opened it.
+            rightDown = nil
+            super.rightMouseDown(with: down)
+        } else {
+            endPan()
+        }
     }
 
     // MARK: Pointer to page
@@ -336,6 +402,12 @@ final class InkSurfaceView: NSView, NSTextViewDelegate {
     // MARK: Writing
 
     override func mouseDown(with event: NSEvent) {
+        if effectiveTool == .hand {
+            // Moving around only: no text editing or ink (choosing the Hand closed any open editor).
+            window?.makeFirstResponder(self)
+            beginPan(at: event.locationInWindow)
+            return
+        }
         let wasEditing = textEditor != nil
         window?.makeFirstResponder(self)
         endTextEditing()
@@ -370,6 +442,10 @@ final class InkSurfaceView: NSView, NSTextViewDelegate {
     }
 
     override func mouseDragged(with event: NSEvent) {
+        if pan != nil {
+            continuePan(event)
+            return
+        }
         if var drag = textDrag {
             let point = sample(from: event).location
             let dx = point.x - drag.start.x, dy = point.y - drag.start.y
@@ -395,6 +471,10 @@ final class InkSurfaceView: NSView, NSTextViewDelegate {
     }
 
     override func mouseUp(with event: NSEvent) {
+        if pan != nil {
+            endPan()
+            return
+        }
         if let drag = textDrag {
             textDrag = nil
             if drag.moved {

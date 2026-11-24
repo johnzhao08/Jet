@@ -10,6 +10,8 @@ public enum InkMode: Equatable, Sendable {
     case lasso
     /// Drag down from a point to push everything below it down (or up to close a gap), like OneNote.
     case insertSpace
+    /// Hand: one finger, the Pencil or a mouse drags the page around (scrolls it); nothing is drawn or changed.
+    case pan
 }
 
 /// An open handwritten note. Saves are debounced; identical content is never rewritten,

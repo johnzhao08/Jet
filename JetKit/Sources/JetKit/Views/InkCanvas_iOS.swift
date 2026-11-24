@@ -15,6 +15,8 @@ import PencilKit
 ///   handles them itself (see `perform(_:)`), so the gestures keep working on a clean page.
 /// - Add Text (toolbar): the next tap on the page opens a text editor there. A finger tap on typed
 ///   text edits it; holding a finger on it and dragging moves it. The keyboard bar has Done and Delete.
+/// - Hand (toolbar): a finger, the Pencil or a mouse drag scrolls the page instead of writing. With
+///   an attached mouse or trackpad, dragging with the secondary button scrolls it whatever the tool.
 struct InkCanvasRepresentable: UIViewControllerRepresentable {
     let model: InkNoteModel
     let root: URL
@@ -47,6 +49,12 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
     private let imageOverlay = ImageSelectionOverlay()
     private let spaceGuide = InsertSpaceGuideView()
     private lazy var insertSpacePan = UIPanGestureRecognizer(target: self, action: #selector(handleInsertSpace(_:)))
+    /// A secondary-button (right mouse) drag moves the page around, with any tool.
+    private lazy var mousePan = UIPanGestureRecognizer(target: self, action: #selector(handleMousePan(_:)))
+    /// The scroll position when a secondary-button drag began.
+    private var mousePanStart: CGPoint?
+    /// PencilKit's own settings for the canvas's scrolling, put back when the Hand is put down.
+    private var scrollDefaults: (touchTypes: [NSNumber], minimumTouches: Int)?
     private lazy var lassoWatcher = TouchWatcher { [weak self] path, touchType in self?.lassoGestureEnded(path, touchType) }
 
     // The tool picker holds the pens the user picked (Pens & Tools) plus the lasso and Jet's own
@@ -198,6 +206,13 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
         // Belt and braces: ink never starts while an insert-space drag could still begin.
         canvas.drawingGestureRecognizer.require(toFail: insertSpacePan)
 
+        // A secondary-button drag (mouse or trackpad) moves the page; a right-click that doesn't move
+        // is left to whatever it does. Primary-button drags keep writing.
+        mousePan.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.indirectPointer.rawValue)]
+        mousePan.maximumNumberOfTouches = 1
+        mousePan.delegate = self
+        canvas.addGestureRecognizer(mousePan)
+
         // Watches lasso gestures (without taking part in them) to know when the selection is finished.
         lassoWatcher.delegate = self
         lassoWatcher.isEnabled = false
@@ -287,20 +302,43 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
             return
         }
         let size = canvas.bounds.size
-        let inset = canvas.adjustedContentInset
         let center = CGPoint(x: (canvas.contentOffset.x + size.width / 2) / old,
                              y: (canvas.contentOffset.y + size.height / 2) / old)
         canvas.zoomScale = target
         updateContentSize()
         layoutTextEditor()
-        let content = canvas.contentSize
-        let maxX = max(content.width - size.width + inset.right, -inset.left)
-        let maxY = max(content.height - size.height + inset.bottom, -inset.top)
-        canvas.contentOffset = CGPoint(x: min(max(center.x * target - size.width / 2, -inset.left), maxX),
-                                       y: min(max(center.y * target - size.height / 2, -inset.top), maxY))
+        canvas.contentOffset = clampedOffset(CGPoint(x: center.x * target - size.width / 2,
+                                                     y: center.y * target - size.height / 2))
         updatePaper()
         updateImageOverlay()
         if abs(target - zoom) > 0.001 { DispatchQueue.main.async { self.model.setZoom(target) } }
+    }
+
+    /// `offset` kept within the page: the canvas's scroll range, insets included.
+    private func clampedOffset(_ offset: CGPoint) -> CGPoint {
+        let size = canvas.bounds.size
+        let inset = canvas.adjustedContentInset
+        let content = canvas.contentSize
+        let maxX = max(content.width - size.width + inset.right, -inset.left)
+        let maxY = max(content.height - size.height + inset.bottom, -inset.top)
+        return CGPoint(x: min(max(offset.x, -inset.left), maxX), y: min(max(offset.y, -inset.top), maxY))
+    }
+
+    /// A secondary-button drag: the page follows the pointer, within its scroll range. Only scrolls.
+    @objc private func handleMousePan(_ pan: UIPanGestureRecognizer) {
+        switch pan.state {
+        case .began:
+            // Throw away any ink the press started.
+            canvas.drawingGestureRecognizer.isEnabled = false
+            applyModeState()
+            mousePanStart = canvas.contentOffset
+        case .changed:
+            guard let start = mousePanStart else { return }
+            let moved = pan.translation(in: view)
+            canvas.contentOffset = clampedOffset(CGPoint(x: start.x - moved.x, y: start.y - moved.y))
+        default:
+            mousePanStart = nil
+        }
     }
 
     func apply(generation: Int, paper: PaperStyle, showsToolPicker: Bool, tools: [InkPickerTool]) {
@@ -443,10 +481,32 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
         endTextEditing()
         stopPlacingText()
         switch tool {
-        case _ where tool == mode, .draw: returnToPreviousTool()
+        case _ where tool == mode, .draw: if mode == .pan { stopPanning() } else { returnToPreviousTool() }
         case .lasso: selectItem(lassoItem.identifier)
         case .insertSpace: if pdf == nil { selectItem(spaceItem.identifier) }
+        case .pan: startPanning()
         }
+    }
+
+    /// Picks up the Hand. It isn't a tool picker item, so the pen in hand stays selected underneath, and
+    /// picking any tool in the picker puts the Hand down again.
+    private func startPanning() {
+        if mode == .lasso || mode == .insertSpace { returnToPreviousTool() }
+        guard mode == .draw else { return }
+        mode = .pan
+        lassoSelection = nil
+        selectImage(nil)
+        spaceGuide.hint = "Hand: drag to move around the page. Tap the hand again to write."
+        applyModeState()
+        if model.mode != .pan { model.mode = .pan }
+    }
+
+    private func stopPanning() {
+        guard mode == .pan else { return }
+        mode = .draw
+        spaceGuide.hint = nil
+        applyModeState()
+        if model.mode != .draw { model.mode = .draw }
     }
 
     private func selectItem(_ identifier: String) {
@@ -487,7 +547,7 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
             spaceGuide.hint = switch newMode {
             case .lasso: "Lasso: circle handwriting to select it. Tap outside the selection when you're done."
             case .insertSpace: "Insert space: drag down with Apple Pencil to add space, up to remove it."
-            case .draw: nil
+            case .draw, .pan: nil
             }
         }
         applyModeState()
@@ -499,10 +559,24 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
     /// Which gestures are live for the current mode.
     private func applyModeState() {
         let inserting = mode == .insertSpace
+        let panning = mode == .pan
         insertSpacePan.isEnabled = inserting
         // No ink while text is being placed or typed: a Pencil touch off the editor only finishes it.
-        canvas.drawingGestureRecognizer.isEnabled = !inserting && !placingText && textEditor == nil
+        canvas.drawingGestureRecognizer.isEnabled = !inserting && !panning && !placingText && textEditor == nil
         lassoWatcher.isEnabled = mode == .lasso
+        // With the Hand nothing on the page can be picked up, and one finger, the Pencil or a mouse drag scrolls.
+        imageLongPress.isEnabled = !panning
+        let scroll = canvas.panGestureRecognizer
+        if panning {
+            if scrollDefaults == nil { scrollDefaults = (scroll.allowedTouchTypes, scroll.minimumNumberOfTouches) }
+            scroll.allowedTouchTypes = [UITouch.TouchType.direct, .pencil, .indirect, .indirectPointer]
+                .map { NSNumber(value: $0.rawValue) }
+            scroll.minimumNumberOfTouches = 1
+        } else if let defaults = scrollDefaults {
+            scrollDefaults = nil
+            scroll.allowedTouchTypes = defaults.touchTypes
+            scroll.minimumNumberOfTouches = defaults.minimumTouches
+        }
         #if targetEnvironment(simulator)
         canvas.panGestureRecognizer.minimumNumberOfTouches = inserting ? 2 : 1
         #endif
@@ -804,7 +878,7 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
         } else if placingText {
             stopPlacingText()
         } else {
-            if mode != .draw { returnToPreviousTool() }
+            if mode == .pan { stopPanning() } else if mode != .draw { returnToPreviousTool() }
             selectImage(nil)
             placingText = true
             placeTextTap.isEnabled = true
@@ -1013,6 +1087,11 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
         return true
     }
 
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive event: UIEvent) -> Bool {
+        // Only secondary-button (right mouse) drags move the page this way; primary ones write as usual.
+        gestureRecognizer === mousePan ? event.buttonMask.contains(.secondary) : true
+    }
+
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
                            shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
         // Let the taps be seen alongside scrolling and zooming, which also start with two fingers.
@@ -1065,11 +1144,20 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
         }
         model.drawingChanged(canvasView.drawing)
         updateContentSize()
+        updateAccessibilityValue()
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         updatePaper()
         updateImageOverlay()
+        updateAccessibilityValue()
+    }
+
+    /// How much is written and where the page is scrolled to, e.g. "3 strokes, scroll y 120".
+    private func updateAccessibilityValue() {
+        let count = canvas.drawing.strokes.count
+        canvas.accessibilityValue = (count == 1 ? "1 stroke" : "\(count) strokes")
+            + ", scroll y \(Int(canvas.contentOffset.y.rounded()))"
     }
 
     func scrollViewDidZoom(_ scrollView: UIScrollView) {
