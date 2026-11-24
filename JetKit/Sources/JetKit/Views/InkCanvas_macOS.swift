@@ -100,6 +100,7 @@ final class InkSurfaceView: NSView, NSTextViewDelegate {
     init(model: InkNoteModel) {
         self.model = model
         super.init(frame: .zero)
+        layerContentsRedrawPolicy = .duringViewResize
         model.textDraftReloaded = { [weak self] draft in self?.textDraftReloaded(draft) }
         history.groupsByEvent = false
         history.levelsOfUndo = 200
@@ -133,8 +134,12 @@ final class InkSurfaceView: NSView, NSTextViewDelegate {
 
     func configure(scale: CGFloat, origin: CGPoint, tool: InkSurfaceTool, swatch: InkSwatch,
                    thickness: InkThickness, dark: Bool, generation: Int) {
+        let scale = max(scale, 0.01)
+        if !samples.isEmpty, scale != self.scale || origin != self.origin || dark != self.dark {
+            needsDisplay = true
+        }
         let toolChanged = tool != self.tool
-        self.scale = max(scale, 0.01)
+        self.scale = scale
         self.origin = origin
         self.tool = tool
         self.swatch = swatch
@@ -485,7 +490,7 @@ final class InkSurfaceView: NSView, NSTextViewDelegate {
         editor.drawsBackground = false
         editor.textContainerInset = .zero
         editor.textContainer?.lineFragmentPadding = 0
-        editor.textContainer?.widthTracksTextView = true
+        editor.textContainer?.widthTracksTextView = false
         editor.isVerticallyResizable = false
         editor.isHorizontallyResizable = false
         editor.isAutomaticQuoteSubstitutionEnabled = false
@@ -527,16 +532,14 @@ final class InkSurfaceView: NSView, NSTextViewDelegate {
         }
     }
 
-    /// Fits the editor to its text at the current zoom.
+    /// Keeps the editor's layout in page points so zooming preserves its glyphs and line breaks.
     private func layoutTextEditor() {
         guard let editor = textEditor, let text = editingText else { return }
-        let fontSize = InkText.fontSize * scale
-        let lineHeight = InkText.lineHeight * scale
         let style = NSMutableParagraphStyle()
-        style.minimumLineHeight = lineHeight
-        style.maximumLineHeight = lineHeight
+        style.minimumLineHeight = InkText.lineHeight
+        style.maximumLineHeight = InkText.lineHeight
         let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: fontSize),
+            .font: NSFont.systemFont(ofSize: InkText.fontSize),
             .paragraphStyle: style,
             .foregroundColor: NSColor.textColor,
         ]
@@ -547,10 +550,11 @@ final class InkSurfaceView: NSView, NSTextViewDelegate {
                 storage.setAttributes(attributes, range: NSRange(location: 0, length: storage.length))
             }
         }
-        // Tall enough for every line at this scale, where the editor's type may wrap sooner than the page's.
-        let size = InkTextLayout.editorSize(editor.string, width: CGFloat(text.width), zoom: scale)
+        let size = InkTextLayout.size(editor.string, width: CGFloat(text.width))
+        editor.textContainer?.containerSize = CGSize(width: size.width, height: .greatestFiniteMagnitude)
         editor.frame = CGRect(x: (CGFloat(text.x) - origin.x) * scale, y: (CGFloat(text.y) - origin.y) * scale,
                               width: size.width * scale, height: size.height * scale)
+        editor.bounds = CGRect(origin: .zero, size: size)
         // The page grows to fit it. Told after this update, since this runs while SwiftUI lays the page out.
         let bottom = CGFloat(text.y) + size.height
         if model.textEditorBottom != bottom {

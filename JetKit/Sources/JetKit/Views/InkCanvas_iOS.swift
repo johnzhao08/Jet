@@ -358,6 +358,7 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
         editingText = draft
         if editor.text != draft.text {
             editor.text = draft.text
+            editor.applyPageStyle()
             // Its typing steps were for the old wording (the reload drops the page's other steps too).
             editor.undoManager?.removeAllActions()
         }
@@ -889,6 +890,7 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
 
         let editor = InkTextEditorView()
         editor.text = editing.text
+        editor.applyPageStyle()
         editor.delegate = self
         editor.onDone = { [weak self] in self?.endTextEditing() }
         editor.onDelete = { [weak self] in
@@ -936,19 +938,14 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
         if refocus, view.window != nil { showToolPicker(pickerWanted) }
     }
 
-    /// Fits the editor to its text at the current zoom. During a pinch (`settled` false) the type
-    /// isn't laid out again for every step: the editor is scaled as it is, and set afresh at the end.
-    private func layoutTextEditor(settled: Bool = true) {
+    /// Keeps the editor's layout in page points so zooming preserves its glyphs and line breaks.
+    private func layoutTextEditor() {
         guard let editor = textEditor, let text = editingText else { return }
         let zoom = max(canvas.zoomScale, 0.01)
-        if settled || editor.appliedZoom == 0 { editor.apply(zoom: zoom) }
-        let typeZoom = editor.appliedZoom
-        // Tall enough for every line at this zoom, where the editor's type may wrap sooner than the page's.
-        let size = InkTextLayout.editorSize(editor.text, width: CGFloat(text.width), zoom: typeZoom)
-        editor.transform = .identity
-        editor.bounds = CGRect(x: 0, y: 0, width: size.width * typeZoom, height: size.height * typeZoom)
+        let size = InkTextLayout.size(editor.text, width: CGFloat(text.width))
+        editor.bounds = CGRect(origin: .zero, size: size)
         editor.center = CGPoint(x: (CGFloat(text.x) + size.width / 2) * zoom, y: (CGFloat(text.y) + size.height / 2) * zoom)
-        editor.transform = CGAffineTransform(scaleX: zoom / typeZoom, y: zoom / typeZoom)
+        editor.transform = CGAffineTransform(scaleX: zoom, y: zoom)
         let bottom = CGFloat(text.y) + size.height
         if model.textEditorBottom != bottom { model.textEditorBottom = bottom }
     }
@@ -1077,7 +1074,7 @@ final class InkCanvasController: UIViewController, PKCanvasViewDelegate, UIPenci
 
     func scrollViewDidZoom(_ scrollView: UIScrollView) {
         pageContent.layout(pageSize: CGSize(width: pageWidth, height: pageHeight), zoom: canvas.zoomScale)
-        layoutTextEditor(settled: false)
+        layoutTextEditor()
         updatePaper()
         updateImageOverlay()
     }
@@ -1261,9 +1258,6 @@ final class InkTextEditorView: UITextView {
     var onDone: () -> Void = {}
     var onDelete: () -> Void = {}
     private let typingUndo = UndoManager()
-    /// The zoom the type is laid out for (0 before the first layout).
-    private(set) var appliedZoom: CGFloat = 0
-
     override var undoManager: UndoManager? { typingUndo }
 
     init() {
@@ -1304,15 +1298,13 @@ final class InkTextEditorView: UITextView {
         return rect
     }
 
-    /// Sets the font and line spacing for `zoom` canvas points per page point.
-    func apply(zoom: CGFloat) {
-        guard abs(zoom - appliedZoom) > 0.001 else { return }
-        appliedZoom = zoom
+    /// Sets the font and line spacing in page points.
+    func applyPageStyle() {
         let style = NSMutableParagraphStyle()
-        style.minimumLineHeight = InkText.lineHeight * zoom
-        style.maximumLineHeight = InkText.lineHeight * zoom
+        style.minimumLineHeight = InkText.lineHeight
+        style.maximumLineHeight = InkText.lineHeight
         let attributes: [NSAttributedString.Key: Any] = [
-            .font: UIFont.systemFont(ofSize: InkText.fontSize * zoom),
+            .font: UIFont.systemFont(ofSize: InkText.fontSize),
             .paragraphStyle: style,
             .foregroundColor: UIColor.label,
         ]

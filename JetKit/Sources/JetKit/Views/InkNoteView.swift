@@ -214,7 +214,14 @@ enum InkRenderer {
         for image in images where image.frame.intersects(rect) {
             let pixels = Int(max(image.frame.width, image.frame.height) * scale)
             if let picture = ImageFiles.cgImage(at: root.appendingPathComponent(image.path), maxPixels: min(max(pixels, 64), 4096)) {
-                draw(picture, in: image.frame)
+                let frame = image.frame
+                let fill = max(frame.width / CGFloat(picture.width), frame.height / CGFloat(picture.height))
+                let size = CGSize(width: CGFloat(picture.width) * fill, height: CGFloat(picture.height) * fill)
+                context.saveGState()
+                context.clip(to: frame)
+                draw(picture, in: CGRect(x: frame.midX - size.width / 2, y: frame.midY - size.height / 2,
+                                         width: size.width, height: size.height))
+                context.restoreGState()
             }
         }
         // Typed text over the pictures, under the ink, so handwriting can mark it up.
@@ -222,7 +229,9 @@ enum InkRenderer {
             InkTextLayout.draw(text, in: context, color: InkTextLayout.color(dark: dark))
         }
         if !drawing.strokes.isEmpty, drawing.bounds.intersects(rect), let ink = cgImage(InkRenderer.image(drawing, rect: rect, scale: scale, dark: dark)) {
-            draw(ink, in: rect)
+            // Keep PencilKit's pixel scale when the requested area ends on a partial pixel.
+            context.clip(to: rect)
+            draw(ink, in: CGRect(x: rect.minX, y: rect.minY, width: CGFloat(ink.width) / scale, height: CGFloat(ink.height) / scale))
         }
         return context.makeImage()
     }
@@ -337,24 +346,34 @@ struct InkPagesView: View {
             // The page extends sideways to fill the window, and to whatever is already written there.
             let pageWidth = max(InkDocument.pageWidth, geometry.size.width / scale, content.isNull ? 0 : content.maxX)
             let width = pageWidth * scale
+            let columns = max(1, Int((pageWidth / tile).rounded(.up)))
             ScrollView(width > geometry.size.width + 0.5 ? [.vertical, .horizontal] : .vertical) {
                 ZStack(alignment: .topLeading) {
-                    LazyVStack(spacing: 0) {
-                        ForEach(0..<count, id: \.self) { index in
-                            let rect = CGRect(x: 0, y: CGFloat(index) * tile, width: pageWidth, height: tile)
-                            InkTile(
-                                drawing: drawing,
-                                images: images,
-                                texts: texts,
-                                root: root,
-                                rect: rect,
-                                dark: colorScheme == .dark,
-                                generation: generation,
-                                inkKey: InkRenderer.signature(of: drawing, in: rect),
-                                textKey: InkRenderer.signature(of: texts, in: rect)
-                            )
+                    // Square tiles of a fixed size on the page, so zooming or a wider window only adds
+                    // columns on the right; a tile's drawing is never stretched to a new shape.
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(0..<count, id: \.self) { row in
+                            HStack(spacing: 0) {
+                                ForEach(0..<columns, id: \.self) { column in
+                                    let rect = CGRect(x: CGFloat(column) * tile, y: CGFloat(row) * tile,
+                                                      width: tile, height: tile)
+                                    InkTile(
+                                        drawing: drawing,
+                                        images: images,
+                                        texts: texts,
+                                        root: root,
+                                        rect: rect,
+                                        dark: colorScheme == .dark,
+                                        generation: generation,
+                                        inkKey: InkRenderer.signature(of: drawing, in: rect),
+                                        textKey: InkRenderer.signature(of: texts, in: rect)
+                                    )
+                                    .frame(width: tile * scale, height: tile * scale)
+                                }
+                            }
+                            .frame(width: width, height: tile * scale, alignment: .leading)
+                            .clipped()
                             .background(PaperLines(paper: paper, spacing: InkDocument.lineSpacing * scale))
-                            .frame(width: width, height: tile * scale)
                         }
                     }
                     #if os(macOS)
@@ -397,7 +416,7 @@ private struct InkTile: View {
                 Color.clear
             }
         }
-        .task(id: "\(generation)-\(dark)-\(inkKey)-\(textKey)-\(images.map(\.frame.debugDescription).joined())") {
+        .task(id: "\(rect.debugDescription)-\(generation)-\(dark)-\(inkKey)-\(textKey)-\(images.map(\.frame.debugDescription).joined())") {
             let hasImages = images.contains { $0.frame.intersects(rect) } || texts.contains { $0.frame.intersects(rect) }
             if hasImages {
                 image = InkRenderer.compose(drawing, images: images, texts: texts, root: root, rect: rect, scale: 2, dark: dark)
@@ -484,6 +503,7 @@ struct PDFPagesView: View {
                             PDFPageTile(pages: pages, index: index, drawing: drawing, images: images, root: root,
                                         generation: generation,
                                         inkKey: InkRenderer.signature(of: drawing, in: pages.frames[index]))
+                                .id(pages.frames[index].debugDescription)
                                 .frame(width: pages.frames[index].width * scale, height: pages.frames[index].height * scale)
                                 .shadow(color: .black.opacity(0.15), radius: 3, y: 1)
                         }
@@ -524,20 +544,26 @@ private struct PDFPageTile: View {
     let generation: Int
     /// Changes when the ink on this page does (see `InkRenderer.signature`).
     let inkKey: Int
-    @State private var image: PlatformImage?
+    @State private var image: CGImage?
     @Environment(\.displayScale) private var displayScale
 
     var body: some View {
         GeometryReader { geometry in
-            ZStack {
-                Color.white
-                if let image { Image(platformImage: image).resizable() }
-            }
-            .task(id: "\(generation)-\(Int(geometry.size.width))-\(images.count)-\(inkKey)") {
-                let scale = geometry.size.width / InkDocument.pageWidth * displayScale
-                let rendered = pages.render(index, drawing: drawing, images: images, root: root, scale: scale)
-                image = rendered.map { InkRenderer.platformImage($0, scale: displayScale) }
-            }
+            let pixels = (geometry.size.width * displayScale).rounded()
+            Color.white
+                .overlay(alignment: .topLeading) {
+                    if let image {
+                        // The last raster row can include padding. Clip it outside the page.
+                        Image(decorative: image, scale: displayScale).resizable()
+                            .frame(width: geometry.size.width,
+                                   height: geometry.size.width * CGFloat(image.height) / CGFloat(image.width))
+                    }
+                }
+                .clipped()
+                .task(id: "\(ObjectIdentifier(pages))-\(generation)-\(pixels)-\(images.count)-\(inkKey)") {
+                    guard pixels > 0 else { return }
+                    image = pages.render(index, drawing: drawing, images: images, root: root, scale: pixels / pages.frames[index].width)
+                }
         }
     }
 }
