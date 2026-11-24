@@ -31,6 +31,13 @@ struct InkNoteView: View {
             .toolbar {
                 #if os(iOS)
                 ToolbarItemGroup(placement: .primaryAction) {
+                    Button { model.toggleTool(.pan) } label: {
+                        Label("Hand", systemImage: "hand.raised")
+                            .symbolVariant(model.mode == .pan ? .fill : .none)
+                    }
+                    .tint(model.mode == .pan ? .accentColor : nil)
+                    .accessibilityIdentifier("ink-tool-hand")
+                    .help("Drag to move around the page without writing")
                     Button { model.toggleTool(.lasso) } label: {
                         Label("Lasso select", systemImage: "lasso")
                             .symbolVariant(model.mode == .lasso ? .fill : .none)

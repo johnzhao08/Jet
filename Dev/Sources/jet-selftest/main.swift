@@ -469,6 +469,7 @@ do {
 }
 
 checkInkText(work: work)
+checkInkHand(work: work)
 
 print("13. PDFs and other files")
 do {

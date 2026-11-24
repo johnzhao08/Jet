@@ -18,6 +18,8 @@ public enum InkSurfaceTool: String, CaseIterable, Identifiable, Sendable {
     case pen, highlighter, eraser
     /// Add Text: click the page to type there, click typed text to edit it, drag it to move it.
     case text
+    /// Hand: drag to move around the page (the page's own scrolling); nothing on the page changes.
+    case hand
 
     public var id: String { rawValue }
 
@@ -27,6 +29,7 @@ public enum InkSurfaceTool: String, CaseIterable, Identifiable, Sendable {
         case .highlighter: "Highlighter"
         case .eraser: "Eraser"
         case .text: "Add Text"
+        case .hand: "Hand"
         }
     }
 
@@ -36,6 +39,7 @@ public enum InkSurfaceTool: String, CaseIterable, Identifiable, Sendable {
         case .highlighter: "highlighter"
         case .eraser: "eraser"
         case .text: "character.textbox"
+        case .hand: "hand.raised"
         }
     }
 
@@ -45,6 +49,7 @@ public enum InkSurfaceTool: String, CaseIterable, Identifiable, Sendable {
         case .highlighter: "See-through marker for highlighting"
         case .eraser: "Wipe across a stroke to remove it"
         case .text: "Click the page to type there; click typed text to edit it, or drag it to move it"
+        case .hand: "Drag to move around the page (with any tool, drag with the right mouse button)"
         }
     }
 
@@ -77,7 +82,7 @@ public enum InkSwatch: String, CaseIterable, Identifiable, Sendable {
         switch tool {
         case .pen: [.black, .blue, .red, .green, .orange, .purple]
         case .highlighter: [.yellow, .green, .pink, .blue, .orange]
-        case .eraser, .text: []
+        case .eraser, .text, .hand: []
         }
     }
 
