@@ -1,3 +1,4 @@
 Jet 1.0 for Mac
 
-- Keeps ink, images, text, and PDF pages proportional while zooming or resizing.
+- Adds a Hand tool for panning ink pages without changing page content.
+- Allows right-button drags to pan ink pages on Mac.
