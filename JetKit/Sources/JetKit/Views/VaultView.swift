@@ -472,8 +472,11 @@ private struct SidebarView: View {
     }
 
     var body: some View {
-        fileList
-        .safeAreaInset(edge: .top, spacing: 0) { header }
+        // Clip scrolling rows so they can't show through the sidebar header.
+        VStack(spacing: 0) {
+            header
+            fileList.clipped()
+        }
         .clearsWhenDragEnds($dropIndicator)
         // Picked rows that moved, were renamed or deleted are no longer picked.
         .onChange(of: visibleRows.map(\.node.path)) { _, paths in
