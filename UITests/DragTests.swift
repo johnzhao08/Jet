@@ -1,5 +1,6 @@
 import XCTest
 #if os(macOS)
+import AppKit
 import CoreGraphics
 #endif
 
@@ -74,6 +75,41 @@ final class DragTests: XCTestCase {
     }
 
     #if os(macOS)
+    func testOpeningMarkdownFromFinderReusesTheVaultWindow() throws {
+        tapRow("Root.md")
+        XCTAssertEqual(app.windows.count, 1, app.debugDescription)
+        let window = app.windows.firstMatch
+        let originalFrame = window.frame
+        let edit = window.buttons["Edit"]
+        if edit.exists { edit.click() }
+        let root = window.textViews.matching(NSPredicate(format: "value CONTAINS %@", "# Root")).firstMatch
+        XCTAssertTrue(root.waitForExistence(timeout: 5), app.debugDescription)
+
+        let note = FileManager.default.temporaryDirectory.appendingPathComponent("Finder-\(UUID()).md")
+        try "# Opened from Finder".write(to: note, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: note) }
+        // Launch Services can route to an installed copy with the same bundle ID.
+        let target = Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent("Jet.app")
+        let bundleID = try XCTUnwrap(Bundle(url: target)?.bundleIdentifier)
+        let running = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+        try XCTSkipUnless(running.count == 1 && running.first?.bundleURL?.standardizedFileURL.path == target.standardizedFileURL.path,
+                          "The test build must be the only running Jet with this bundle ID")
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.allowsRunningApplicationSubstitution = false
+        configuration.addsToRecentItems = false
+        let delivered = expectation(description: "Launch Services opened the Markdown file")
+        NSWorkspace.shared.open([note], withApplicationAt: target, configuration: configuration) { _, error in
+            XCTAssertNil(error)
+            delivered.fulfill()
+        }
+        wait(for: [delivered], timeout: 10)
+
+        let opened = window.textViews.matching(NSPredicate(format: "value CONTAINS %@", "# Opened from Finder")).firstMatch
+        XCTAssertTrue(opened.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertEqual(app.windows.count, 1, app.debugDescription)
+        XCTAssertEqual(window.frame, originalFrame)
+    }
+
     func testCommandPaletteOpensWeeklyNote() {
         app.typeKey("k", modifierFlags: .command)
         let command = app.textFields["command-search"]

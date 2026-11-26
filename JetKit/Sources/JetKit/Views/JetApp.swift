@@ -112,6 +112,8 @@ struct RootView: View {
         .onOpenURL { url in app.receive(url) }
         #else
         .onAppear { OpenRequests.shared.handler = { urls in app.receive(urls) } }
+        // Reuse this scene for Finder file events delivered through the app delegate.
+        .handlesExternalEvents(preferring: ["file://"], allowing: ["file://"])
         #endif
     }
 }
