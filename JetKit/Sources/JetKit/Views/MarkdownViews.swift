@@ -13,6 +13,11 @@ struct MarkdownNoteView: View {
     @AppStorage("jet.markdown.fontSize") private var fontSize = 15.0
     @State private var completion: MarkdownCompletion?
     @State private var action: MarkdownEditorAction?
+    #if os(macOS)
+    @State private var wordCount: MarkdownWordCount?
+    @State private var showingWordCount = false
+    @State private var readerWordCountRequest: UUID?
+    #endif
     @State private var output: MarkdownOutputRequest?
     @State private var pdf: MarkdownPDFDocument?
     @State private var exporting = false
@@ -40,6 +45,12 @@ struct MarkdownNoteView: View {
                     case .failure(let error): message = error.localizedDescription
                     }
                 }
+                #if os(macOS)
+                .wordCountRequest(readerWordCountRequest) { count in
+                    readerWordCountRequest = nil
+                    presentWordCount(count)
+                }
+                #endif
             } else {
                 #if os(macOS)
                 MarkdownTextView(text: $model.text, insertion: $insertion, action: action, fontSize: fontSize,
@@ -82,6 +93,11 @@ struct MarkdownNoteView: View {
         } message: { Text(message ?? "") }
         .imageInsertion($imageSource, session: session) { path, _ in embed(path) }
         #if os(macOS)
+        .onChange(of: session.wordCountRequest) { showWordCount() }
+        .onChange(of: reading) { readerWordCountRequest = nil }
+        .sheet(isPresented: $showingWordCount) {
+            if let wordCount { WordCountSheet(count: wordCount) }
+        }
         // In the reading view, pictures dropped on the note go into it (saved in Attachments); the
         // editor takes its own drops, at the spot they land. Other files fall through to the window,
         // which imports them, as does the sidebar.
@@ -146,6 +162,24 @@ struct MarkdownNoteView: View {
         .task(id: session.indexVersion) { unlinked = await session.unlinkedMentions(of: path) }
         .onChange(of: session.contentVersion) { model.reloadIfChangedOnDisk() }
     }
+
+    #if os(macOS)
+    private func showWordCount() {
+        guard !showingWordCount, session.selection == path else { return }
+        if reading {
+            readerWordCountRequest = UUID()
+        } else if let editor = NSApp.keyWindow?.firstResponder as? MarkdownNSTextView {
+            presentWordCount(MarkdownWordCount(source: editor.string, selection: editor.selectedRange()))
+        } else {
+            presentWordCount(MarkdownWordCount(source: model.text))
+        }
+    }
+
+    private func presentWordCount(_ count: MarkdownWordCount) {
+        wordCount = count
+        showingWordCount = true
+    }
+    #endif
 
     private func requestOutput(printDialog: Bool) {
         reading = true

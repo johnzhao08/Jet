@@ -33,6 +33,10 @@ public struct JetApp: App {
         #if os(macOS)
         .defaultSize(width: 1180, height: 760)
         .commands {
+            CommandGroup(after: .textEditing) {
+                Button("Word Count…") { model.session?.wordCountRequest += 1 }
+                    .keyboardShortcut("c", modifiers: [.command, .shift])
+            }
             if let updaterController {
                 CommandGroup(after: .appInfo) {
                     CheckForUpdatesView(updater: updaterController.updater)
