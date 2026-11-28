@@ -61,6 +61,10 @@ public final class VaultSession {
     public let ref: VaultRef
     public let root: URL
 
+    #if os(macOS)
+    var wordCountRequest = 0
+    #endif
+
     public var tree: [FileNode] = []
     /// The open note. Remembered per vault so the app reopens where you left off.
     public var selection: String? {

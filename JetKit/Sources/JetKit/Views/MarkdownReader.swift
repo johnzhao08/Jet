@@ -34,6 +34,19 @@ struct MarkdownReader: ReaderRepresentable {
     let fontSize: CGFloat
     let jump: MarkdownHeadingJump?
     let output: MarkdownOutputRequest?
+
+    #if os(macOS)
+    var wordCountID: UUID? = nil
+    var showWordCount: ((MarkdownWordCount) -> Void)? = nil
+
+    func wordCountRequest(_ id: UUID?, show: @escaping (MarkdownWordCount) -> Void) -> Self {
+        var reader = self
+        reader.wordCountID = id
+        reader.showWordCount = show
+        return reader
+    }
+    #endif
+
     var follow: (String, String) -> Void
     var export: (Result<Data, Error>) -> Void
 
@@ -66,6 +79,9 @@ struct MarkdownReader: ReaderRepresentable {
         private var generation = 0
         private var jumpID: UUID?
         private var outputID: UUID?
+        #if os(macOS)
+        private var wordCountID: UUID?
+        #endif
         init(_ parent: MarkdownReader) { self.parent = parent }
 
         func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
@@ -111,10 +127,49 @@ struct MarkdownReader: ReaderRepresentable {
                 jumpID = jump.id
                 web.callAsyncJavaScript("jumpToHeading(title)", arguments: ["title": jump.heading], in: nil, in: .page)
             }
+            #if os(macOS)
+            if let id = parent.wordCountID, id != wordCountID {
+                wordCountID = id
+                readWordCount(web, id: id)
+            }
+            #endif
             guard let request = parent.output, request.id != outputID else { return }
             outputID = request.id
             DispatchQueue.main.async { self.output(web, printDialog: request.printDialog) }
         }
+
+        #if os(macOS)
+        private func readWordCount(_ web: WKWebView, id: UUID) {
+            web.evaluateJavaScript("""
+                (() => {
+                    const main = document.querySelector('main');
+                    const body = document.createRange();
+                    body.selectNodeContents(main);
+                    const properties = main.querySelector(':scope > .properties');
+                    if (properties) body.setStartAfter(properties);
+                    const total = main.innerText;
+                    const metadata = properties?.innerText;
+                    const text = metadata && total.startsWith(metadata)
+                        ? total.slice(metadata.length).replace(/^\\n+/, '') : total;
+                    const selection = window.getSelection();
+                    if (!selection.rangeCount || selection.isCollapsed) return [text];
+                    const range = selection.getRangeAt(0).cloneRange();
+                    const start = body.comparePoint(range.startContainer, range.startOffset);
+                    const end = body.comparePoint(range.endContainer, range.endOffset);
+                    if (end < 0 || start > 0) return [text, ''];
+                    if (start >= 0 && end <= 0) return [text, selection.toString()];
+                    if (start < 0) range.setStart(body.startContainer, body.startOffset);
+                    if (end > 0) range.setEnd(body.endContainer, body.endOffset);
+                    return [text, range.toString()];
+                })()
+                """) { [weak self] result, _ in
+                guard let self, self.parent.wordCountID == id else { return }
+                let text = result as? [String] ?? []
+                let count = text.first.map { MarkdownWordCount(total: $0, selection: text.dropFirst().first) }
+                self.parent.showWordCount?(count ?? MarkdownWordCount(source: self.parent.text))
+            }
+        }
+        #endif
 
         private func output(_ web: WKWebView, printDialog: Bool) {
             #if os(macOS)
